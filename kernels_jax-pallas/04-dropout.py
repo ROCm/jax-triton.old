@@ -2,7 +2,6 @@ import tabulate
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
-import numpy as np
 
 
 def dropout_kernel(x_ref, p_ref, x_keep_ref, y_ref):
@@ -35,7 +34,6 @@ def main(unused_argv):
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (512,), dtype=jnp.float32)
     y = dropout(x, p=0.5, seed=123).block_until_ready()
-
     print(
         tabulate.tabulate([
             ["input"] + x.tolist(),

@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import jax_triton as jt
 import triton
 import triton.language as tl
-import numpy as np
 
 
 @triton.jit
