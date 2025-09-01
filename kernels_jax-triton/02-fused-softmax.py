@@ -47,7 +47,7 @@ def softmax(x: jnp.ndarray) -> jnp.ndarray:
     strides = jt.strides_from_shape(x.shape)
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
-    
+
     out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     grid = (n_rows,)
     return jt.triton_call(

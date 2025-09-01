@@ -36,7 +36,7 @@ def main(unused_argv):
     x = jax.random.normal(k1, (512, 512), dtype=jnp.float32)
     y = jax.random.normal(k2, (512, 512), dtype=jnp.float32)
     z = jax.jit(matmul, static_argnums=2)(x, y, activation=jax.nn.leaky_relu).block_until_ready()
-    
+
     expected = jax.nn.leaky_relu(x @ y).block_until_ready()
     np.testing.assert_allclose(z, expected, rtol=1e-2, atol=1e-2)
     print("Test passed!")

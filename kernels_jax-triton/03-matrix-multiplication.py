@@ -124,7 +124,7 @@ def matmul(a, b, activation=""):
     BLOCK_SIZE_N = 128
     BLOCK_SIZE_K = 32
     GROUP_SIZE_M = 4
-    
+
     # Allocates output.
     out_shape = jax.ShapeDtypeStruct(shape=(M, N), dtype=a.dtype)
     # 1D launch kernel where each block gets its own program.

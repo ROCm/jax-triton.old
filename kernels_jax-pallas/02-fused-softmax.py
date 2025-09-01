@@ -7,7 +7,7 @@ import numpy as np
 def softmax_kernel(x_ref, y_ref):
     x = x_ref[:]
     x_minus_max = x - jnp.max(x)
-    
+
     numerator = jnp.exp(x_minus_max)
     denominator = jnp.sum(numerator)
     y = numerator / denominator

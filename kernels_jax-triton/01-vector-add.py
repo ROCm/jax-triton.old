@@ -30,7 +30,7 @@ def add_kernel(x_ptr,
 def add(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     n_elements = x.size
     BLOCK_SIZE = 16
-    
+
     out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     grid = (triton.cdiv(x.size, BLOCK_SIZE),)
     return jt.triton_call(

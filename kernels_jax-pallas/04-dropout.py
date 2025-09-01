@@ -16,7 +16,7 @@ def dropout_kernel(x_ref, p_ref, x_keep_ref, y_ref):
 @jax.jit
 def dropout(x, p, seed):
     BLOCK_SIZE = 16
-    
+
     key = jax.random.PRNGKey(seed)
     random = jax.random.uniform(key, shape=x.shape, dtype=x.dtype)
     x_keep = random > p
