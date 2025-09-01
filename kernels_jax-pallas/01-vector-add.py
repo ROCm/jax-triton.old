@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax.experimental import pallas as pl
+import numpy as np
 
 
 def add_vectors_kernel(x_ref, y_ref, z_ref):
@@ -12,6 +12,7 @@ def add_vectors_kernel(x_ref, y_ref, z_ref):
 def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
     assert x.shape == y.shape
     BLOCK_SIZE = 16
+    
     out_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
     grid = (x.size // BLOCK_SIZE,)
     return pl.pallas_call(

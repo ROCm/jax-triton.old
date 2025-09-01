@@ -1,5 +1,0 @@
-"Name","Calls","TotalDurationNs","AverageNs","Percentage","MinNs","MaxNs","StdDev"
-"__amd_rocclr_fillBufferAligned",9,151840,16871.111111,91.18,16040,17560,513.333333
-"__amd_rocclr_copyBuffer",3,8160,2720.000000,4.90,2640,2840,105.830052
-"add_kernel",1,3640,3640.000000,2.19,3640,3640,0.00000000e+00
-"wrapped_iota",1,2880,2880.000000,1.73,2880,2880,0.00000000e+00

@@ -1,5 +1,0 @@
-"Name","Calls","TotalDurationNs","AverageNs","Percentage","MinNs","MaxNs","StdDev"
-"__amd_rocclr_fillBufferAligned",9,152120,16902.222222,83.09,15800,17480,630.907635
-"softmax_kernel",2,17440,8720.000000,9.53,8120,9320,848.528137
-"__amd_rocclr_copyBuffer",2,7840,3920.000000,4.28,2680,5160,1753.624817
-"wrapped_broadcast",1,5680,5680.000000,3.10,5680,5680,0.00000000e+00

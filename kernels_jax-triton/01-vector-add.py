@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax_triton as jt
 import triton
 import triton.language as tl
+import numpy as np
 
 
 @triton.jit
@@ -27,9 +28,10 @@ def add_kernel(x_ptr,
 
 
 def add(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
-    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     n_elements = x.size
     BLOCK_SIZE = 16
+    
+    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     grid = (triton.cdiv(x.size, BLOCK_SIZE),)
     return jt.triton_call(
         x,
@@ -43,10 +45,13 @@ def add(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
 
 def main(unused_argv):
-    x_val = jnp.arange(512)
-    y_val = jnp.arange(512, 1024)
-    # print(add(x_val, y_val))
-    print(jax.jit(add)(x_val, y_val))
+    x = jnp.arange(512)
+    y = jnp.arange(512, 1024)
+    z = jax.jit(add)(x, y)
+
+    expected = x + y
+    np.testing.assert_allclose(z, expected)
+    print("Test passed!")
 
 
 if __name__ == "__main__":

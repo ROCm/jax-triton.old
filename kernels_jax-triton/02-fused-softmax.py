@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax_triton as jt
 import triton
 import triton.language as tl
+import numpy as np
 
 
 @triton.jit
@@ -42,11 +43,12 @@ def softmax_kernel(input_ptr, output_ptr,
 
 
 def softmax(x: jnp.ndarray) -> jnp.ndarray:
-    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     n_rows, n_cols = x.shape
     strides = jt.strides_from_shape(x.shape)
     # The block size of each loop iteration is the smallest power of two greater than the number of columns in `x`
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
+    
+    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     grid = (n_rows,)
     return jt.triton_call(
         x,  # Input array
@@ -63,10 +65,12 @@ def softmax(x: jnp.ndarray) -> jnp.ndarray:
 
 
 def main(unused_argv):
-    x_val = jnp.ones((1024, 512), dtype="float32")
-    print(softmax(x_val).block_until_ready())
-    print(jax.jit(softmax)(x_val).block_until_ready())
+    x = jnp.ones((1024, 512), dtype="float32")
+    y = jax.jit(softmax)(x).block_until_ready()
 
+    expected = jax.nn.softmax(x).block_until_ready()
+    np.testing.assert_allclose(y, expected)
+    print("Test passed!")
 
 if __name__ == "__main__":
     from absl import app

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax_triton as jt
 import triton
 import triton.language as tl
+import numpy as np
 
 
 @triton.jit
@@ -35,9 +36,10 @@ def seeded_dropout_kernel(
 
 
 def seeded_dropout(x, p, seed):
-    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     n_elements = x.size
-    BLOCK_SIZE = 4
+    BLOCK_SIZE = 16
+
+    out_shape = jax.ShapeDtypeStruct(shape=x.shape, dtype=x.dtype)
     grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
     return jt.triton_call(
         x,
@@ -53,17 +55,13 @@ def seeded_dropout(x, p, seed):
 
 def main(unused_argv):
     key = jax.random.PRNGKey(0)
-    x = jax.random.normal(key, (8,), dtype=jnp.float32)
+    x = jax.random.normal(key, (512,), dtype=jnp.float32)
     jit_dropout = jax.jit(seeded_dropout, static_argnums=(1, 2))
     output = jit_dropout(x, p=0.5, seed=123).block_until_ready()
-    output2 = jit_dropout(x, p=0.5, seed=123).block_until_ready()
-    output3 = jit_dropout(x, p=0.5, seed=512).block_until_ready()
     print(
         tabulate.tabulate([
             ["input"] + x.tolist(),
             ["output (seed = 123)"] + output.tolist(),
-            ["output (seed = 123)"] + output2.tolist(),
-            ["output (seed = 512)"] + output3.tolist(),
         ]))
 
 

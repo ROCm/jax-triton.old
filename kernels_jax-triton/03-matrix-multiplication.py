@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax_triton as jt
 import triton
 import triton.language as tl
+import numpy as np
 
 
 @triton.jit
@@ -122,7 +123,8 @@ def matmul(a, b, activation=""):
     BLOCK_SIZE_M = 128
     BLOCK_SIZE_N = 128
     BLOCK_SIZE_K = 32
-    GROUP_SIZE_M = 8
+    GROUP_SIZE_M = 4
+    
     # Allocates output.
     out_shape = jax.ShapeDtypeStruct(shape=(M, N), dtype=a.dtype)
     # 1D launch kernel where each block gets its own program.
@@ -156,12 +158,13 @@ def matmul(a, b, activation=""):
 
 def main(unused_argv):
     k1, k2 = jax.random.split(jax.random.PRNGKey(0))
-    a_val = jax.random.normal(k1, (512, 512), dtype=jnp.float32)
-    b_val = jax.random.normal(k2, (512, 512), dtype=jnp.float32)
-    print(matmul(a_val, b_val, leaky_relu).block_until_ready())
-    print(
-        jax.jit(matmul, static_argnums=2)(a_val, b_val, leaky_relu).block_until_ready())
+    a = jax.random.normal(k1, (512, 512), dtype=jnp.float32)
+    b = jax.random.normal(k2, (512, 512), dtype=jnp.float32)
+    c = jax.jit(matmul, static_argnums=2)(a, b, leaky_relu).block_until_ready()
 
+    expected = jax.nn.leaky_relu(a @ b).block_until_ready()
+    np.testing.assert_allclose(c, expected, rtol=1e-2, atol=1e-2)
+    print("Test passed!")
 
 if __name__ == "__main__":
     from absl import app

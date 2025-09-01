@@ -1,17 +1,17 @@
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax.experimental import pallas as pl
+import numpy as np
 
 
 def softmax_kernel(x_ref, y_ref):
-    row_idx = pl.program_id(0)
-    row = x_ref[row_idx, :]
-    row_minus_max = row - jnp.max(row)
-
-    numerator = jnp.exp(row_minus_max)
+    x = x_ref[:]
+    x_minus_max = x - jnp.max(x)
+    
+    numerator = jnp.exp(x_minus_max)
     denominator = jnp.sum(numerator)
-    y_ref[row_idx, :] = numerator / denominator
+    y = numerator / denominator
+    y_ref[:] = y
 
 
 @jax.jit
@@ -27,9 +27,9 @@ def softmax(x: jax.Array) -> jax.Array:
 
 def main(unused_argv):
     x = jnp.ones((1024, 512), dtype="float32")
-    y = softmax(x)
+    y = softmax(x).block_until_ready()
 
-    expected = jax.nn.softmax(x)
+    expected = jax.nn.softmax(x).block_until_ready()
     np.testing.assert_allclose(y, expected)
     print("Test passed!")
 
