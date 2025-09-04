@@ -922,7 +922,7 @@ def aiter_attn_fwd(
     output_, softmax_lse, s_dmask, \
     philox_seed, philox_offset = \
                 jt.triton_call(q, k, v, 
-                               kernel=aiter_attn_fwd, output_shape=, 
+                               kernel=aiter_attn_fwd, output_shape=output_shape, 
                            grid=grid,num_warps=2, num_stages=1, **metaparams)
     aiter_attn_fwd[grid](
         q,

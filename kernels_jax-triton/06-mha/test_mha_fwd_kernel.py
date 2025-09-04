@@ -32,7 +32,7 @@ class MHAFWDTest(parameterized.TestCase):
 
     # run aiter_mha_attn_fwd_func
     
-    out = backend.aiter_mha_attn_fwd_func(q_tensor, k_tensor, v_tensor, causal=True)
+    out = backend.aiter_mha_attn_fwd_func(q_tensor, k_tensor, v_tensor, input_meta)
     out.block_until_ready()
     
     # expected via JAX ragged_dot
