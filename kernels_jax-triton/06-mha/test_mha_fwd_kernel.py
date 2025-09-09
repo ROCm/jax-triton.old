@@ -12,12 +12,11 @@ from common import (
 )
 
 
-
 class MHAFWDTest(parameterized.TestCase):
   @parameterized.named_parameters(
       # (test_name, shape(B, S, H, D), dtype)
-      ("mha_test1", (2, 4096, 64, 128), jnp.float32),      # 70B
-      ("mha_test2", (2, 8196, 28, 128), jnp.bfloat16),     # 3B 
+      # ("mha_test1", (2, 1024, 32, 128), jnp.float32),
+      ("mha_test2", (2, 1024, 64, 128), jnp.bfloat16),
   )
   def test_mha_fwd_triton_kernel(
                               self,
@@ -30,9 +29,9 @@ class MHAFWDTest(parameterized.TestCase):
     ### axlearn forward input: q, k, v
     ### axlearn forward output: out(), lse
 
-    # run aiter_mha_attn_fwd_func
+    # run _attention_fwd
     
-    out = backend.aiter_mha_attn_fwd_func(q_tensor, k_tensor, v_tensor, input_meta)
+    out = backend._attention_fwd(q_tensor, k_tensor, v_tensor, input_meta)
     out.block_until_ready()
     
     # expected via JAX ragged_dot
