@@ -134,22 +134,23 @@ class MhaMetaData():
         assert (nheads_q % nheads_k) == 0    
 
 
-# q.shape == k.shape == v.shape
+# q.shape == k.shape == v.shape = (B, S, H, D)
 def generate_mha_input(
-        shape:tuple[int, ...] = MHA_SHAPE, 
-        preferred_element_type: jnp.dtype = MHA_DATATYPE
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    shape:tuple[int, ...] = MHA_SHAPE, 
+    dtype:jnp.dtype = MHA_DATATYPE
+):
 
-    key = jax.random.PRNGKey(RNG_SEED)
-    q_ = jax.random.normal(key, shape, dtype=preferred_element_type)
-    k_ = jax.random.normal(key, shape, dtype=preferred_element_type)
-    v_ = jax.random.normal(key, shape, dtype=preferred_element_type)
+    q_key, k_key, v_key = jax.random.split(jax.random.PRNGKey(RNG_SEED), 3)
+    q = jax.random.normal(q_key, shape, dtype=dtype)
+    k = jax.random.normal(k_key, shape, dtype=dtype)
+    v = jax.random.normal(v_key, shape, dtype=dtype)
 
     sm_scale = shape[-1] ** -0.5
     input_metadata = MhaMetaData(sm_scale=sm_scale)
-    input_metadata.max_seqlens_q = shape[0]
-    input_metadata.max_seqlens_k = shape[2]
-    return q_, k_, v_, input_metadata
+    input_metadata.max_seqlens_q = shape[1]
+    input_metadata.max_seqlens_k = shape[1]
+    return q, k, v, input_metadata
+
 
 # q.shape != k.shape
 def mha_input_helper(
@@ -178,32 +179,28 @@ def mha_input_helper(
 def jax_attn_fwd_reference(q, k, v, dy=None):
     """
     Args:
-        q, k, v: [batch, seq_len, heads, head_dim]
-        dy: optional upstream gradient [batch, seq_len, heads, head_dim]
+        q, k, v: [batch, heads, seq_len, head_dim]
+        dy: optional upstream gradient [batch, heads, seq_len, head_dim]
     
     Returns:
-        y: [batch, seq_len, heads, head_dim]
-        (dq, dk, dv): gradients, all [batch, seq_len, heads, head_dim]
+        y: [batch, heads, seq_len, head_dim]
+        (dq, dk, dv): gradients, all [batch, heads, seq_len, head_dim]
     """
-    # Transpose to (B, H, S, D)
-    q_ = jnp.transpose(q, (0, 2, 1, 3))
-    k_ = jnp.transpose(k, (0, 2, 1, 3))
-    v_ = jnp.transpose(v, (0, 2, 1, 3))
 
-    d_k = q_.shape[-1]
-    seq_len = q_.shape[-2]
+    _, _, seq_len, head_dim = q.shape
+    dtype = q.dtype
 
     # Scaled dot-product attention
-    logits = jnp.matmul(q_, jnp.swapaxes(k_, -2, -1)) / jnp.sqrt(d_k)  # [B, H, N, N]
+    logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)).astype("float32") / jnp.sqrt(head_dim)  # [B, H, N, N]
 
     # Causal mask: lower triangular
-    mask = jnp.tril(jnp.ones((1, 1, seq_len, seq_len), dtype=q_.dtype))
-    logits = jnp.where(mask == 1, logits, -jnp.inf)
+    # mask = jnp.tril(jnp.ones((1, 1, seq_len, seq_len), dtype=q.dtype))
+    # logits = jnp.where(mask == 1, logits, -jnp.inf)
 
     weights = jax.nn.softmax(logits, axis=-1)  # Softmax along keys
-    output = jnp.matmul(weights, v_)            # [B, H, N, d_v]
+    output = jnp.matmul(weights, v)            # [B, H, N, d_v]
 
-    return jnp.transpose(output, (0, 2, 1, 3))
+    return output.astype(dtype)
 
 
 def jax_attn_bwd_reference(q, k, v, dy=None):
@@ -211,7 +208,7 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
     Compute attention output and its gradients w.r.t q, k, v
 
     Args:
-        q, k, v: tensors of shape [batch, heads, seq_len, d_k]
+        q, k, v: tensors of shape [batch, heads, seq_len, head_dim]
         dy: optional upstream gradient (same shape as output). If None, uses ones.
 
     Returns:
@@ -219,13 +216,13 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
         (dq, dk, dv): gradients of output w.r.t q, k, v
     """
     # Transpose to (B, H, S, D)
-    q_ = jnp.transpose(q, (0, 2, 1, 3))
-    k_ = jnp.transpose(k, (0, 2, 1, 3))
-    v_ = jnp.transpose(v, (0, 2, 1, 3))
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
 
     def attention(q, k, v):
-        d_k = q.shape[-1]
-        logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)) / jnp.sqrt(d_k)
+        head_dim = q.shape[-1]
+        logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)) / jnp.sqrt(head_dim)
         mask = jnp.tril(jnp.ones_like(logits))
         logits = jnp.where(mask == 1, logits, -jnp.inf)
         weights = jax.nn.softmax(logits, axis=-1)
@@ -234,7 +231,7 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
     def attention_wrapped(qkv):
         return attention(*qkv)
 
-    y_, vjp_fn = jax.vjp(attention_wrapped, (q_, k_, v_))
+    y_, vjp_fn = jax.vjp(attention_wrapped, (q, k, v))
 
     if dy is None:
         dy = jnp.ones_like(y_)  # Default upstream gradient

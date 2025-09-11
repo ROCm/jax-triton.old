@@ -584,23 +584,25 @@ def _attention_fwd(q: jnp.ndarray, k: jnp.ndarray,
   
   return output1
 
+
 def main(unused_argv):
 
   #Random config
-  dtype=jnp.float16
-  causal=False
-  use_alibi=False
+  dtype = jnp.float16
+  causal = False
+  use_alibi = False
 
   # Hardcode config
   #Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD = 4, 48, 48, 1, 1, 128
   Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD = 1, 32, 32, 1024, 1024, 128
 
   q, k, v, input_metadata = mha_input_helper(Z, HQ, HK, N_CTX_Q, N_CTX_K, D_HEAD, dtype)
-  o = jnp.empty_like(q)
 
   # Do Triton
+  jt_out = jax.jit(_attention_fwd, static_argnums=3)(q, k, v, input_metadata)
+  jt_out.block_until_ready()
   print("Triton")
-  print(jax.jit(_attention_fwd,static_argnums=3)(q, k, v, input_metadata))
+  print(jt_out)
 
   # Do JAX
   # Replicate K and V if using MQA/GQA
@@ -611,23 +613,32 @@ def main(unused_argv):
       v = jnp.reshape(v, (v.shape[0], v.shape[1], -1, v.shape[2], v.shape[3])).expand(-1, -1, HQ // HK, -1, -1).reshape(v.shape[0], -1, v.shape[2], v.shape[3])
 
   scores = jnp.einsum('bhqd,bhkd->bhqk', q, k).astype("float32") * input_metadata.sm_scale
-  #if causal:
- #     mask = jnp.tril(torch.ones(N_CTX_Q, N_CTX_K), diagonal=N_CTX_K - N_CTX_Q)
- #     scores[:, :, mask == 0] = float("-inf")
- # if use_alibi:
- #     scores += compute_alibi_tensor(alibi_slopes, N_CTX_Q, N_CTX_K)
-#
+#   if causal:
+#       mask = jnp.tril(torch.ones(N_CTX_Q, N_CTX_K), diagonal=N_CTX_K - N_CTX_Q)
+#       scores[:, :, mask == 0] = float("-inf")
+#   if use_alibi:
+#       scores += compute_alibi_tensor(alibi_slopes, N_CTX_Q, N_CTX_K)
   p = jax.nn.softmax(scores, axis=-1)
-#  if causal:
-#      # If N_CTX_Q > N_CTX_K, there is at least one row of all -infs going into
-#      # the softmax. This produces a row of NaNs as -inf - -inf == NaN. So we fix
-#      # this by converting the NaNs to 0s, which is what they should be out of the softmax.
-#      nan_mask = jnp.isnan(p)
-#      p[nan_mask == 1] = 0
-  ref_out = jnp.einsum('bhqk,bhkd->bhqd', p.astype("float16"), v)
+#   if causal:
+#       # If N_CTX_Q > N_CTX_K, there is at least one row of all -infs going into
+#       # the softmax. This produces a row of NaNs as -inf - -inf == NaN. So we fix
+#       # this by converting the NaNs to 0s, which is what they should be out of the softmax.
+#       nan_mask = jnp.isnan(p)
+#       p[nan_mask == 1] = 0
 
+  ref_out = jnp.einsum('bhqk,bhkd->bhqd', p.astype("float16"), v)
+  ref_out.block_until_ready()
   print("JAX")
   print(ref_out)
+
+  # numeric check (allow fp16 tolerance)
+  atol = 1e-2 if dtype == jnp.float16 else 1e-3
+  max_diff = jnp.max(jnp.abs(jt_out - ref_out))
+  print(f"Max difference: {max_diff}")
+  assert jnp.allclose(jt_out, ref_out, atol=atol)
+  assert jnp.allclose(jt_out, ref_out, atol=atol), (
+    f"Max diff ({max_diff}) exceeds tolerance (atol={atol})!")
+
 
 if __name__ == "__main__":
   from absl import app
