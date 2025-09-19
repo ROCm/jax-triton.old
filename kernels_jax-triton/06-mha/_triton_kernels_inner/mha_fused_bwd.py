@@ -4,7 +4,7 @@
 from typing import Optional, Dict
 import functools
 import json
-import torch
+
 import triton
 import triton.language as tl
 
@@ -25,13 +25,8 @@ def _bwd_preprocess(
     o_ptr,
     do_ptr,  # noqa: E741
     delta_ptr,
-    stride_o_b,
-    stride_o_h,
-    stride_o_m,
-    stride_o_k,
-    stride_delta_b,
-    stride_delta_h,
-    stride_delta_m,
+    stride_o_b, stride_o_h, stride_o_m, stride_o_k,
+    stride_delta_b, stride_delta_h, stride_delta_m,
     stride_descale_do_z,
     cu_seqlens_q,
     max_seqlen_q,
@@ -382,9 +377,9 @@ def _bwd_kernel_dkdvdq_causal(
     BLOCK_D_MODEL_POW2: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    IS_FP8: tl.constexpr,
-    FP8_MAX: tl.constexpr,
-    NUM_SMS: tl.constexpr,
+    # IS_FP8: tl.constexpr,
+    # FP8_MAX: tl.constexpr,
+    # NUM_SMS: tl.constexpr,
     USE_INT64_STRIDES: tl.constexpr,
     NUM_XCD: tl.constexpr,
 ):
@@ -784,9 +779,9 @@ def _bwd_kernel_dkdvdq_noncausal(
     BLOCK_D_MODEL_POW2: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     IS_VARLEN: tl.constexpr,
-    IS_FP8: tl.constexpr,
-    FP8_MAX: tl.constexpr,
-    NUM_SMS: tl.constexpr,
+    # IS_FP8: tl.constexpr,
+    # FP8_MAX: tl.constexpr,
+    # NUM_SMS: tl.constexpr,
     USE_INT64_STRIDES: tl.constexpr,
 ):
     if USE_INT64_STRIDES:

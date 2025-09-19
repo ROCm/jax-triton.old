@@ -2,13 +2,18 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 from typing import Optional, Dict
-import torch
+
+import jax
+from jax import random
+import jax.numpy as jnp
+import jax_triton as jt
+
 import triton
 import triton.language as tl
 
-from aiter.ops.triton.utils.types import _is_fp8
-from aiter.ops.triton.utils.logger import AiterTritonLogger
-from aiter.ops.triton._triton_kernels.mha_fused_bwd import (
+# from aiter.ops.triton.utils.types import _is_fp8
+# from aiter.ops.triton.utils.logger import AiterTritonLogger
+from _triton_kernels.mha_fused_bwd import (
     _bwd_preprocess,
     _bwd_kernel_dkdvdq_causal,
     _bwd_kernel_dkdvdq_noncausal,
@@ -20,16 +25,16 @@ _LOGGER = AiterTritonLogger()
 
 
 def flash_attn_fused_backward(
-    do: torch.Tensor,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    o: torch.Tensor,
-    softmax_lse: torch.Tensor,
-    dq: torch.Tensor,
-    dk: torch.Tensor,
-    dv: torch.Tensor,
-    dbias: torch.Tensor,
+    do: jnp.ndarray,
+    q: jnp.ndarray,
+    k: jnp.ndarray,
+    v: jnp.ndarray,
+    o: jnp.ndarray,
+    softmax_lse: jnp.ndarray,
+    dq: jnp.ndarray,
+    dk: jnp.ndarray,
+    dv: jnp.ndarray,
+    dbias: jnp.ndarray,
     sm_scale: float,
     alibi_slopes: Optional[torch.Tensor],
     causal: bool,
@@ -54,26 +59,25 @@ def flash_attn_fused_backward(
     if dbias is not None:
         raise ValueError("Bias is not supported yet in the Triton Backend")
 
-    IS_FP8 = _is_fp8(q)
-    if IS_FP8:
-        FP8_MAX = torch.finfo(q.dtype).max
-        descale_strides = (
-            descale_q.stride(0),
-            descale_k.stride(0),
-            descale_v.stride(0),
-            descale_do.stride(0),
-        )
-    else:
-        FP8_MAX = None
-        stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = (
-            stride_descale_do_z
-        ) = None
-        descale_strides = (
-            stride_descale_q_z,
-            stride_descale_k_z,
-            stride_descale_v_z,
-            stride_descale_do_z,
-        )
+    # IS_FP8 = _is_fp8(q)
+    # if IS_FP8:
+    #     FP8_MAX = torch.finfo(q.dtype).max
+    #     descale_strides = (
+    #         descale_q.stride(0),
+    #         descale_k.stride(0),
+    #         descale_v.stride(0),
+    #         descale_do.stride(0),
+    #     )
+    # else:
+    stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = (
+        stride_descale_do_z
+    ) = None
+    descale_strides = (
+        stride_descale_q_z,
+        stride_descale_k_z,
+        stride_descale_v_z,
+        stride_descale_do_z,
+    )
 
     IS_VARLEN = True if cu_seqlens_q is not None else False
 
@@ -87,7 +91,6 @@ def flash_attn_fused_backward(
             q.shape[2],
         )
         _, num_k_heads = max_seqlen_k, k.shape[1]
-        q_strides = (0, q.stride(1), q.stride(0), q.stride(2))
         q_strides = (0, q.stride(1), q.stride(0), q.stride(2))
         k_strides = (0, k.stride(1), k.stride(0), k.stride(2))
         v_strides = (0, v.stride(1), v.stride(0), v.stride(2))
@@ -113,7 +116,7 @@ def flash_attn_fused_backward(
     BLOCK_D_MODEL_POW2 = max(BLOCK_D_MODEL_POW2, 16)
 
     # init delta
-    delta = torch.zeros_like(softmax_lse)
+    delta = jnp.zeros_like(softmax_lse)
     if IS_VARLEN:
         # [total_tokens, num_q_heads, seqlen_q]
         delta_strides = (0, delta.stride(1), delta.stride(0))
@@ -132,29 +135,41 @@ def flash_attn_fused_backward(
         num_q_heads,
     )
 
-    _bwd_preprocess[pre_grid](
-        o,
-        do,
-        delta,
+    delta = jt.triton_call(
+        o, do, delta,
         *o_strides,
         *delta_strides,
-        descale_strides[3],
-        cu_seqlens_q,
-        max_seqlen_q,
-        descale_do,
-        BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
-        BLOCK_D_MODEL=head_sz,
-        BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
-        IS_VARLEN=IS_VARLEN,
-        IS_FP8=IS_FP8,
+
+        kernel=_bwd_preprocess,
+        out_shape=out_shape,
+        grid=pre_grid,
+        # num_warps=4,
+        # num_stages=1,
     )
+
+    # _bwd_preprocess[pre_grid](
+    #     o,
+    #     do,
+    #     delta,
+    #     *o_strides,
+    #     *delta_strides,
+    #     descale_strides[3],
+    #     cu_seqlens_q,
+    #     max_seqlen_q,
+    #     descale_do,
+    #     BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
+    #     BLOCK_D_MODEL=head_sz,
+    #     BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
+    #     IS_VARLEN=IS_VARLEN,
+    #     IS_FP8=IS_FP8,
+    # )
+
     # dropout_mask
     use_dropout = dropout_p > 0.0
     if use_dropout:
-        dropout_mask = torch.zeros(
+        dropout_mask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
-            device=q.device,
-            dtype=torch.float32,
+            dtype=jnp.float32,
         )
         dropout_strides = dropout_mask.stride()
     else:
@@ -162,7 +177,7 @@ def flash_attn_fused_backward(
         dropout_strides = (0, 0, 0, 0)
 
     # Fuses dk,dv and dq computations into one kernel using atomics
-    if BLOCK_D_MODEL_POW2 > 160 or q.dtype == torch.float32:
+    if BLOCK_D_MODEL_POW2 > 160 or q.dtype == jnp.float32:
         config_dkdvdq = config["dkdvdq_kernel_N64"]
     else:
         config_dkdvdq = config["dkdvdq_kernel_N128"]
@@ -170,7 +185,7 @@ def flash_attn_fused_backward(
     num_k_pids = (max_seqlen_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq[
         "BLOCK_N"
     ]
-    NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+    # NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
     if causal:
         grid_dkdvdq = (batch * num_q_heads * num_k_pids,)
 
@@ -214,9 +229,9 @@ def flash_attn_fused_backward(
             BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
             ENABLE_DROPOUT=use_dropout,
             IS_VARLEN=IS_VARLEN,
-            IS_FP8=IS_FP8,
-            FP8_MAX=FP8_MAX,
-            NUM_SMS=NUM_SMS,
+            # IS_FP8=IS_FP8,
+            # FP8_MAX=FP8_MAX,
+            # NUM_SMS=NUM_SMS,
             USE_INT64_STRIDES=USE_INT64_STRIDES,
             NUM_XCD=get_num_xcds(),
             **config_dkdvdq,
@@ -264,9 +279,9 @@ def flash_attn_fused_backward(
             BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
             ENABLE_DROPOUT=use_dropout,
             IS_VARLEN=IS_VARLEN,
-            IS_FP8=IS_FP8,
-            FP8_MAX=FP8_MAX,
-            NUM_SMS=NUM_SMS,
+            # IS_FP8=IS_FP8,
+            # FP8_MAX=FP8_MAX,
+            # NUM_SMS=NUM_SMS,
             USE_INT64_STRIDES=USE_INT64_STRIDES,
             NUM_XCD=get_num_xcds(),
             **config_dkdvdq,
