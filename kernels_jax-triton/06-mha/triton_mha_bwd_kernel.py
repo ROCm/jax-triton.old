@@ -135,34 +135,29 @@ def flash_attn_fused_backward(
         num_q_heads,
     )
 
-    delta = jt.triton_call(
-        o, do, delta,
-        *o_strides,
-        *delta_strides,
-
-        kernel=_bwd_preprocess,
-        out_shape=out_shape,
-        grid=pre_grid,
+    metaparams = dict(
+        BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
+        BLOCK_D_MODEL=head_sz,
+        BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
         # num_warps=4,
         # num_stages=1,
     )
 
-    # _bwd_preprocess[pre_grid](
-    #     o,
-    #     do,
-    #     delta,
-    #     *o_strides,
-    #     *delta_strides,
-    #     descale_strides[3],
-    #     cu_seqlens_q,
-    #     max_seqlen_q,
-    #     descale_do,
-    #     BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
-    #     BLOCK_D_MODEL=head_sz,
-    #     BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
-    #     IS_VARLEN=IS_VARLEN,
-    #     IS_FP8=IS_FP8,
-    # )
+    delta = jt.triton_call(
+        o,
+        do,
+        delta,
+        *o_strides,
+        *delta_strides,
+        descale_strides[3],
+        cu_seqlens_q,
+        max_seqlen_q,
+        descale_do,
+        kernel=_bwd_preprocess,
+        out_shape=out_shape,
+        grid=pre_grid,
+        **metaparams
+    )
 
     # dropout_mask
     use_dropout = dropout_p > 0.0
@@ -186,10 +181,26 @@ def flash_attn_fused_backward(
         "BLOCK_N"
     ]
     # NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
+
+    metaparams = dict(
+        NUM_Q_HEADS=num_q_heads,
+        NUM_K_HEADS=num_k_heads,
+        BATCH=batch,
+        NUM_K_PIDS=num_k_pids,
+        BLOCK_D_MODEL=head_sz,
+        BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
+        ENABLE_DROPOUT=use_dropout,
+        IS_VARLEN=IS_VARLEN,
+        USE_INT64_STRIDES=USE_INT64_STRIDES,
+        NUM_XCD=get_num_xcds(),
+        # num_warps=4,
+        # num_stages=1,
+    )
+
     if causal:
         grid_dkdvdq = (batch * num_q_heads * num_k_pids,)
 
-        _bwd_kernel_dkdvdq_causal[grid_dkdvdq](
+        _, _, delta = jt.triton_call(
             q,
             k,
             v,
@@ -221,25 +232,17 @@ def flash_attn_fused_backward(
             descale_k,
             descale_v,
             descale_do,
-            NUM_Q_HEADS=num_q_heads,
-            NUM_K_HEADS=num_k_heads,
-            BATCH=batch,
-            NUM_K_PIDS=num_k_pids,
-            BLOCK_D_MODEL=head_sz,
-            BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
-            ENABLE_DROPOUT=use_dropout,
-            IS_VARLEN=IS_VARLEN,
-            # IS_FP8=IS_FP8,
-            # FP8_MAX=FP8_MAX,
-            # NUM_SMS=NUM_SMS,
-            USE_INT64_STRIDES=USE_INT64_STRIDES,
-            NUM_XCD=get_num_xcds(),
-            **config_dkdvdq,
+            kernel=_bwd_kernel_dkdvdq_causal,
+            out_shape=out_shape,
+            grid=grid_dkdvdq,
+            **metaparams,
+            **config_dkdvdq
         )
     else:
         # in non causal inner loop over grouped q heads
         grid_dkdvdq = (batch * num_k_heads * num_k_pids,)
-        _bwd_kernel_dkdvdq_noncausal[grid_dkdvdq](
+
+        _, _, delta = jt.triton_call(
             q,
             k,
             v,
@@ -271,20 +274,11 @@ def flash_attn_fused_backward(
             descale_k,
             descale_v,
             descale_do,
-            NUM_Q_HEADS=num_q_heads,
-            NUM_K_HEADS=num_k_heads,
-            BATCH=batch,
-            NUM_K_PIDS=num_k_pids,
-            BLOCK_D_MODEL=head_sz,
-            BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
-            ENABLE_DROPOUT=use_dropout,
-            IS_VARLEN=IS_VARLEN,
-            # IS_FP8=IS_FP8,
-            # FP8_MAX=FP8_MAX,
-            # NUM_SMS=NUM_SMS,
-            USE_INT64_STRIDES=USE_INT64_STRIDES,
-            NUM_XCD=get_num_xcds(),
-            **config_dkdvdq,
+            kernel=_bwd_kernel_dkdvdq_causal,
+            out_shape=out_shape,
+            grid=grid_dkdvdq,
+            **metaparams,
+            **config_dkdvdq
         )
 
     return delta
