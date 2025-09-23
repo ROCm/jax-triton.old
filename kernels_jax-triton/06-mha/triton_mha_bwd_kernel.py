@@ -36,19 +36,19 @@ def flash_attn_fused_backward(
     dv: jnp.ndarray,
     dbias: jnp.ndarray,
     sm_scale: float,
-    alibi_slopes: Optional[torch.Tensor],
+    alibi_slopes: Optional[jnp.Tensor],
     causal: bool,
-    cu_seqlens_q: Optional[torch.Tensor],
-    cu_seqlens_k: Optional[torch.Tensor],
+    cu_seqlens_q: Optional[jnp.Tensor],
+    cu_seqlens_k: Optional[jnp.Tensor],
     max_seqlen_q: int,
     max_seqlen_k: int,
     dropout_p: float,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
-    descale_q: Optional[torch.Tensor] = None,
-    descale_k: Optional[torch.Tensor] = None,
-    descale_v: Optional[torch.Tensor] = None,
-    descale_do: Optional[torch.Tensor] = None,
+    descale_q: Optional[jnp.Tensor] = None,
+    descale_k: Optional[jnp.Tensor] = None,
+    descale_v: Optional[jnp.Tensor] = None,
+    descale_do: Optional[jnp.Tensor] = None,
     USE_INT64_STRIDES: Optional[bool] = False,
     config: Optional[Dict[str, any]] = None,
 ):
@@ -59,16 +59,6 @@ def flash_attn_fused_backward(
     if dbias is not None:
         raise ValueError("Bias is not supported yet in the Triton Backend")
 
-    # IS_FP8 = _is_fp8(q)
-    # if IS_FP8:
-    #     FP8_MAX = torch.finfo(q.dtype).max
-    #     descale_strides = (
-    #         descale_q.stride(0),
-    #         descale_k.stride(0),
-    #         descale_v.stride(0),
-    #         descale_do.stride(0),
-    #     )
-    # else:
     stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = (
         stride_descale_do_z
     ) = None

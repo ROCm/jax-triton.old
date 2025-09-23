@@ -5,7 +5,7 @@ import jax_triton as jt
 
 from absl.testing import absltest, parameterized
 
-#common func
+# common func
 from common import (
     generate_mha_input,
     jax_attn_fwd_reference
