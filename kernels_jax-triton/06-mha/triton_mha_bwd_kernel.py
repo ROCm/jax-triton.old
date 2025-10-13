@@ -20,6 +20,13 @@ from _triton_kernels.mha_fused_bwd import (
     _get_config,
 )
 
+# from common import (
+#     MhaMetaData,
+#     mha_input_helper,
+#     get_shape_from_layout,
+#     get_strides_from_layout,
+# )
+
 
 _LOGGER = AiterTritonLogger()
 
@@ -34,7 +41,7 @@ def flash_attn_fused_backward(
     dq: jnp.ndarray,
     dk: jnp.ndarray,
     dv: jnp.ndarray,
-    dbias: jnp.ndarray,
+    # dbias: jnp.ndarray,
     sm_scale: float,
     alibi_slopes: Optional[jnp.Tensor],
     causal: bool,
@@ -56,8 +63,8 @@ def flash_attn_fused_backward(
         f"FLASH_ATTN_FUSED_BKWD: do={tuple(do.shape)} q={tuple(q.shape)}  k={tuple(k.shape)}  v={tuple(v.shape)} "
         + f"dq={tuple(dq.shape)}  dk={tuple(dk.shape)}  dv={tuple(dv.shape)}"
     )
-    if dbias is not None:
-        raise ValueError("Bias is not supported yet in the Triton Backend")
+    # if dbias is not None:
+    #     raise ValueError("Bias is not supported yet in the Triton Backend")
 
     stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = (
         stride_descale_do_z
@@ -188,87 +195,74 @@ def flash_attn_fused_backward(
     )
 
     if causal:
+        kernel = _bwd_kernel_dkdvdq_causal
         grid_dkdvdq = (batch * num_q_heads * num_k_pids,)
-
-        _, _, delta = jt.triton_call(
-            q,
-            k,
-            v,
-            sm_scale,
-            do,
-            dk,
-            dv,
-            dq,
-            softmax_lse,
-            delta,
-            *q_strides,
-            *k_strides,
-            *v_strides,
-            *dk_strides,
-            *dq_strides,
-            *delta_strides,
-            *do_strides,
-            *dropout_strides,
-            *descale_strides,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_mask,
-            dropout_p,
-            philox_seed,
-            philox_offset,
-            descale_q,
-            descale_k,
-            descale_v,
-            descale_do,
-            kernel=_bwd_kernel_dkdvdq_causal,
-            out_shape=out_shape,
-            grid=grid_dkdvdq,
-            **metaparams,
-            **config_dkdvdq
-        )
     else:
         # in non causal inner loop over grouped q heads
+        kernel = _bwd_kernel_dkdvdq_noncausal
         grid_dkdvdq = (batch * num_k_heads * num_k_pids,)
 
-        _, _, delta = jt.triton_call(
-            q,
-            k,
-            v,
-            sm_scale,
-            do,
-            dk,
-            dv,
-            dq,
-            softmax_lse,
-            delta,
-            *q_strides,
-            *k_strides,
-            *v_strides,
-            *dk_strides,
-            *dq_strides,
-            *delta_strides,
-            *do_strides,
-            *dropout_strides,
-            *descale_strides,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_mask,
-            dropout_p,
-            philox_seed,
-            philox_offset,
-            descale_q,
-            descale_k,
-            descale_v,
-            descale_do,
-            kernel=_bwd_kernel_dkdvdq_causal,
-            out_shape=out_shape,
-            grid=grid_dkdvdq,
-            **metaparams,
-            **config_dkdvdq
-        )
+    _, _, delta = jt.triton_call(
+        q,
+        k,
+        v,
+        sm_scale,
+        do,
+        dk,
+        dv,
+        dq,
+        softmax_lse,
+        delta,
+        *q_strides,
+        *k_strides,
+        *v_strides,
+        *dk_strides,
+        *dq_strides,
+        *delta_strides,
+        *do_strides,
+        *dropout_strides,
+        *descale_strides,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        dropout_mask,
+        dropout_p,
+        philox_seed,
+        philox_offset,
+        descale_q,
+        descale_k,
+        descale_v,
+        descale_do,
+        kernel=_bwd_kernel_dkdvdq_causal,
+        out_shape=out_shape,
+        grid=grid_dkdvdq,
+        **metaparams,
+        **config_dkdvdq
+    )
 
     return delta
+
+
+# MHA Shape
+BATCH_SIZE: int = 2
+SEQ_LEN: int = 4096
+NUM_HEADS: int = 64
+HEAD_SIZE: int = 128
+MHA_DATATYPE = jnp.float32
+RNG_SEED = 42
+
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
+assert all(dim > 0 for dim in MHA_SHAPE)
+
+
+def main(unused_argv):
+    # create data
+    shape = MHA_SHAPE
+
+    jax.random.PRNGKey(RNG_SEED)
+    q_key, k_key, v_key = jax.random.split(key, 3)
+
+    q = jax.random.normal(q_key, shape, dtype=dtype)
+    k = jax.random.normal(k_key, shape, dtype=dtype)
+    v = jax.random.normal(v_key, shape, dtype=dtype)
