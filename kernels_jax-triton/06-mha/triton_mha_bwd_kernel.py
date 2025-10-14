@@ -43,13 +43,13 @@ def flash_attn_fused_backward(
     dv: jnp.ndarray,
     # dbias: jnp.ndarray,
     sm_scale: float,
-    alibi_slopes: Optional[jnp.Tensor],
     causal: bool,
+    alibi_slopes: Optional[jnp.Tensor],
     cu_seqlens_q: Optional[jnp.Tensor],
     cu_seqlens_k: Optional[jnp.Tensor],
     max_seqlen_q: int,
     max_seqlen_k: int,
-    dropout_p: float,
+    dropout_p: float = 0.0,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
     descale_q: Optional[jnp.Tensor] = None,
@@ -66,9 +66,7 @@ def flash_attn_fused_backward(
     # if dbias is not None:
     #     raise ValueError("Bias is not supported yet in the Triton Backend")
 
-    stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = (
-        stride_descale_do_z
-    ) = None
+    stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = stride_descale_do_z = None
     descale_strides = (
         stride_descale_q_z,
         stride_descale_k_z,
@@ -249,20 +247,64 @@ BATCH_SIZE: int = 2
 SEQ_LEN: int = 4096
 NUM_HEADS: int = 64
 HEAD_SIZE: int = 128
-MHA_DATATYPE = jnp.float32
-RNG_SEED = 42
 
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
+
+RNG_SEED = 42
 
 
 def main(unused_argv):
     # create data
     shape = MHA_SHAPE
+    dtype = jnp.float32
 
     jax.random.PRNGKey(RNG_SEED)
-    q_key, k_key, v_key = jax.random.split(key, 3)
+    q_key, k_key, v_key, do_key = jax.random.split(key, 4)
 
     q = jax.random.normal(q_key, shape, dtype=dtype)
     k = jax.random.normal(k_key, shape, dtype=dtype)
     v = jax.random.normal(v_key, shape, dtype=dtype)
+
+    sm_scale = shape[-1] ** -0.5
+    causal = True
+
+    o, softmax_lse = mha_fwd_reference(q, k, v, sm_scale=sm_scale, causal=causal)
+
+    do = jax.random.normal(do_key, o.shape, dtype=dtype)
+
+    dq = jnp.zeros_like(q)
+    dk = jnp.zeros_like(k)
+    dv = jnp.zeros_like(v)
+
+    alibi_slopes = None
+    cu_seqlens_q = cu_seqlens_k = None
+    max_seqlens_q = max_seqlen_k = SEQ_LEN
+
+    delta = flash_attn_fused_backward(
+        do=do,
+        q=q,
+        k=k,
+        v=v,
+        o=out,
+        softmax_lse=softmax_lse,
+        dq=dq,
+        dk=dk,
+        dv=dv,
+        sm_scale=sm_scale,
+        alibi_slopes=None,
+        causal=causal,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=MAX_SEQLEN_Q,
+        max_seqlen_k=MAX_SEQLEN_K,
+        dropout_p=dropout_p,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        descale_q=descale_q,
+        descale_k=descale_k,
+        descale_v=descale_v,
+        descale_do=descale_do,
+        USE_INT64_STRIDES=False,
+        config=config,
+    )

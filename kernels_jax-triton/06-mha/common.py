@@ -215,10 +215,6 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
         y: attention output
         (dq, dk, dv): gradients of output w.r.t q, k, v
     """
-    # Transpose to (B, H, S, D)
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
 
     def attention(q, k, v):
         head_dim = q.shape[-1]
@@ -226,7 +222,8 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
         mask = jnp.tril(jnp.ones_like(logits))
         logits = jnp.where(mask == 1, logits, -jnp.inf)
         weights = jax.nn.softmax(logits, axis=-1)
-        return jnp.matmul(weights, v)
+        out = jnp.matmul(weights, v)
+        return out
 
     def attention_wrapped(qkv):
         return attention(*qkv)
@@ -240,13 +237,7 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
 
     (dq_, dk_, dv_), = vjp_fn(dy)
 
-    # Transpose back to (B, S, H, D)
-    y = jnp.transpose(y_, (0, 2, 1, 3))
-    dq = jnp.transpose(dq_, (0, 2, 1, 3))
-    dk = jnp.transpose(dk_, (0, 2, 1, 3))
-    dv = jnp.transpose(dv_, (0, 2, 1, 3))
-
-    return y, (dq, dk, dv)
+    return y_, (dq_, dk_, dv_)
 
 
 def ragged_dot_reference(
