@@ -11,13 +11,10 @@ import jax_triton as jt
 import triton
 import triton.language as tl
 
-# from aiter.ops.triton.utils.types import _is_fp8
-# from aiter.ops.triton.utils.logger import AiterTritonLogger
-from _triton_kernels.mha_fused_bwd import (
+from _triton_kernels.mha_fused_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_dkdvdq_causal,
     _bwd_kernel_dkdvdq_noncausal,
-    _get_config,
 )
 
 # from common import (
@@ -32,17 +29,19 @@ _LOGGER = AiterTritonLogger()
 
 
 def flash_attn_fused_backward(
-    do: jnp.ndarray,
+    # inputs
     q: jnp.ndarray,
     k: jnp.ndarray,
     v: jnp.ndarray,
     o: jnp.ndarray,
     softmax_lse: jnp.ndarray,
+    do: jnp.ndarray,
+    sm_scale: float,
+    # outputs
     dq: jnp.ndarray,
     dk: jnp.ndarray,
     dv: jnp.ndarray,
-    # dbias: jnp.ndarray,
-    sm_scale: float,
+    # others
     causal: bool,
     alibi_slopes: Optional[jnp.Tensor],
     cu_seqlens_q: Optional[jnp.Tensor],
@@ -52,27 +51,9 @@ def flash_attn_fused_backward(
     dropout_p: float = 0.0,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
-    descale_q: Optional[jnp.Tensor] = None,
-    descale_k: Optional[jnp.Tensor] = None,
-    descale_v: Optional[jnp.Tensor] = None,
-    descale_do: Optional[jnp.Tensor] = None,
     USE_INT64_STRIDES: Optional[bool] = False,
-    config: Optional[Dict[str, any]] = None,
+    # config: Optional[Dict[str, any]] = None,
 ):
-    _LOGGER.info(
-        f"FLASH_ATTN_FUSED_BKWD: do={tuple(do.shape)} q={tuple(q.shape)}  k={tuple(k.shape)}  v={tuple(v.shape)} "
-        + f"dq={tuple(dq.shape)}  dk={tuple(dk.shape)}  dv={tuple(dv.shape)}"
-    )
-    # if dbias is not None:
-    #     raise ValueError("Bias is not supported yet in the Triton Backend")
-
-    stride_descale_q_z = stride_descale_k_z = stride_descale_v_z = stride_descale_do_z = None
-    descale_strides = (
-        stride_descale_q_z,
-        stride_descale_k_z,
-        stride_descale_v_z,
-        stride_descale_do_z,
-    )
 
     IS_VARLEN = True if cu_seqlens_q is not None else False
 
@@ -121,19 +102,46 @@ def flash_attn_fused_backward(
 
     # preprocess
     # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
-    if config is None:
-        config = _get_config()
 
+    # if config is None:
+    #     config = _get_config()
+    config = {
+        "preprocess_kernel": {
+        "PRE_BLOCK": 128
+        }, 
+        "dkdvdq_kernel_N64" : {
+            "BLOCK_M": 16,
+            "BLOCK_N": 64,
+            "num_warps": 8,
+            "num_stages": 1,
+            "waves_per_eu": 2,
+            "BLK_SLICE_FACTOR": 1,
+            "matrix_instr_nonkdim": 16
+        }, 
+        "dkdvdq_kernel_N128" : {
+            "BLOCK_M": 16,
+            "BLOCK_N": 128,
+            "num_warps": 8,
+            "num_stages": 1,
+            "waves_per_eu": 2,
+            "BLK_SLICE_FACTOR": 1,
+            "matrix_instr_nonkdim": 16
+        },
+    }
+
+    out_shape = jax.ShapeDtypeStruct(shape=delta.shape, dtype=delta.dtype)
     pre_grid = (
-        triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
+        # triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
+        triton.cdiv(max_seqlen_q, PRE_BLOCK),
         batch,
         num_q_heads,
     )
 
-    metaparams = dict(
+    metaparams_pre = dict(
         BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
         BLOCK_D_MODEL=head_sz,
         BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
+        IS_VARLEN=IS_VARLEN,
         # num_warps=4,
         # num_stages=1,
     )
@@ -144,14 +152,12 @@ def flash_attn_fused_backward(
         delta,
         *o_strides,
         *delta_strides,
-        descale_strides[3],
         cu_seqlens_q,
         max_seqlen_q,
-        descale_do,
         kernel=_bwd_preprocess,
         out_shape=out_shape,
         grid=pre_grid,
-        **metaparams
+        **metaparams_pre
     )
 
     # dropout_mask
@@ -172,9 +178,7 @@ def flash_attn_fused_backward(
     else:
         config_dkdvdq = config["dkdvdq_kernel_N128"]
 
-    num_k_pids = (max_seqlen_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq[
-        "BLOCK_N"
-    ]
+    num_k_pids = (max_seqlen_k + BLOCK_N - 1) // BLOCK_N
     # NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
 
     metaparams = dict(
@@ -187,7 +191,7 @@ def flash_attn_fused_backward(
         ENABLE_DROPOUT=use_dropout,
         IS_VARLEN=IS_VARLEN,
         USE_INT64_STRIDES=USE_INT64_STRIDES,
-        NUM_XCD=get_num_xcds(),
+        NUM_XCD=8,
         # num_warps=4,
         # num_stages=1,
     )
@@ -200,17 +204,21 @@ def flash_attn_fused_backward(
         kernel = _bwd_kernel_dkdvdq_noncausal
         grid_dkdvdq = (batch * num_k_heads * num_k_pids,)
 
-    _, _, delta = jt.triton_call(
-        q,
-        k,
-        v,
-        sm_scale,
+    out_shape = (
+        jax.ShapeDtypeStruct(shape=dk.shape, dtype=dk.dtype),
+        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),
+        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),        
+    )
+
+    dv, dk = jt.triton_call(
+        # inputs
+        q, k, v,
         do,
-        dk,
-        dv,
-        dq,
-        softmax_lse,
-        delta,
+        softmax_lse, delta,
+        sm_scale,
+        # outputs
+        dk, dv, dq,
+        # strides
         *q_strides,
         *k_strides,
         *v_strides,
@@ -219,7 +227,7 @@ def flash_attn_fused_backward(
         *delta_strides,
         *do_strides,
         *dropout_strides,
-        *descale_strides,
+        # others
         cu_seqlens_q,
         cu_seqlens_k,
         max_seqlen_q,
@@ -228,21 +236,17 @@ def flash_attn_fused_backward(
         dropout_p,
         philox_seed,
         philox_offset,
-        descale_q,
-        descale_k,
-        descale_v,
-        descale_do,
-        kernel=_bwd_kernel_dkdvdq_causal,
+        kernel=kernel,
         out_shape=out_shape,
         grid=grid_dkdvdq,
         **metaparams,
         **config_dkdvdq
     )
 
-    return delta
+    return dv, dk
 
 
-# MHA Shape
+# MHA shape
 BATCH_SIZE: int = 2
 SEQ_LEN: int = 4096
 NUM_HEADS: int = 64
@@ -251,60 +255,69 @@ HEAD_SIZE: int = 128
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
 
+# MHA dtype
+MHA_DTYPE = jnp.float32
+
 RNG_SEED = 42
 
 
 def main(unused_argv):
-    # create data
-    shape = MHA_SHAPE
-    dtype = jnp.float32
-
+    # generate random key
     jax.random.PRNGKey(RNG_SEED)
     q_key, k_key, v_key, do_key = jax.random.split(key, 4)
 
-    q = jax.random.normal(q_key, shape, dtype=dtype)
-    k = jax.random.normal(k_key, shape, dtype=dtype)
-    v = jax.random.normal(v_key, shape, dtype=dtype)
+    # fwd inputs
+    q = jax.random.normal(q_key, MHA_SHAPE, dtype=MHA_DTYPE)
+    k = jax.random.normal(k_key, MHA_SHAPE, dtype=MHA_DTYPE)
+    v = jax.random.normal(v_key, MHA_SHAPE, dtype=MHA_DTYPE)
 
-    sm_scale = shape[-1] ** -0.5
+    sm_scale = HEAD_SIZE ** -0.5
+
+    # metaparams
     causal = True
+    alibi_slopes = None
+    cu_seqlens_q = cu_seqlens_k = None
+    max_seqlen_q = max_seqlen_k = SEQ_LEN
 
+    # save fwd outputs for bwd
     o, softmax_lse = mha_fwd_reference(q, k, v, sm_scale=sm_scale, causal=causal)
 
-    do = jax.random.normal(do_key, o.shape, dtype=dtype)
+    do = jax.random.normal(do_key, o.shape, dtype=MHA_DTYPE)
 
+    # bwd outputs
     dq = jnp.zeros_like(q)
     dk = jnp.zeros_like(k)
     dv = jnp.zeros_like(v)
 
-    alibi_slopes = None
-    cu_seqlens_q = cu_seqlens_k = None
-    max_seqlens_q = max_seqlen_k = SEQ_LEN
-
-    delta = flash_attn_fused_backward(
-        do=do,
+    # call function
+    dv, dk = flash_attn_fused_backward(
+        # inputs
         q=q,
         k=k,
         v=v,
-        o=out,
+        o=o,
         softmax_lse=softmax_lse,
+        do=do,
+        sm_scale=sm_scale,
+        # outputs
         dq=dq,
         dk=dk,
         dv=dv,
-        sm_scale=sm_scale,
-        alibi_slopes=None,
+        # metaparams
         causal=causal,
+        alibi_slopes=alibi_slopes,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
-        max_seqlen_q=MAX_SEQLEN_Q,
-        max_seqlen_k=MAX_SEQLEN_K,
-        dropout_p=dropout_p,
-        philox_seed=philox_seed,
-        philox_offset=philox_offset,
-        descale_q=descale_q,
-        descale_k=descale_k,
-        descale_v=descale_v,
-        descale_do=descale_do,
-        USE_INT64_STRIDES=False,
-        config=config,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        # dropout_p=dropout_p,
+        # philox_seed=philox_seed,
+        # philox_offset=philox_offset,
+        # USE_INT64_STRIDES=False,
+        # config=config,
     )
+
+
+if __name__ == "__main__":
+    from absl import app
+    app.run(main)
