@@ -8,7 +8,7 @@ import json
 import triton
 import triton.language as tl
 
-from ..utils._triton.pid_preprocessing import remap_xcd
+from utils._triton.pid_preprocessing import remap_xcd
 
 
 # This function computes delta given output Out and gradient DO:
@@ -35,6 +35,11 @@ def _bwd_preprocess(
     BLOCK_D_MODEL_POW2: tl.constexpr,
     IS_VARLEN: tl.constexpr,
 ):
+    stride_o_b = tl.cast(stride_o_b, tl.int32)
+    stride_o_h = tl.cast(stride_o_h, tl.int32)
+    stride_o_m = tl.cast(stride_o_m, tl.int32)
+    stride_o_k = tl.cast(stride_o_k, tl.int32)
+
     pid_m = tl.program_id(0)  # seqlen
     bid = tl.program_id(1)  # batch
     hid = tl.program_id(2)  # head

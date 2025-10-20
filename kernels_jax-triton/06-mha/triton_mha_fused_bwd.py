@@ -25,9 +25,6 @@ from _triton_kernels.mha_fused_bwd_kernel import (
 # )
 
 
-_LOGGER = AiterTritonLogger()
-
-
 def flash_attn_fused_backward(
     # inputs
     q: jnp.ndarray,
@@ -43,9 +40,9 @@ def flash_attn_fused_backward(
     dv: jnp.ndarray,
     # others
     causal: bool,
-    alibi_slopes: Optional[jnp.Tensor],
-    cu_seqlens_q: Optional[jnp.Tensor],
-    cu_seqlens_k: Optional[jnp.Tensor],
+    alibi_slopes: Optional[jnp.ndarray],
+    cu_seqlens_q: Optional[jnp.ndarray],
+    cu_seqlens_k: Optional[jnp.ndarray],
     max_seqlen_q: int,
     max_seqlen_k: int,
     dropout_p: float = 0.0,
@@ -67,24 +64,36 @@ def flash_attn_fused_backward(
             q.shape[2],
         )
         _, num_k_heads = max_seqlen_k, k.shape[1]
-        q_strides = (0, q.stride(1), q.stride(0), q.stride(2))
-        k_strides = (0, k.stride(1), k.stride(0), k.stride(2))
-        v_strides = (0, v.stride(1), v.stride(0), v.stride(2))
-        o_strides = (0, o.stride(1), o.stride(0), o.stride(2))
-        dq_strides = (0, dq.stride(1), dq.stride(0), dq.stride(2))
-        dk_strides = (0, dk.stride(1), dk.stride(0), dk.stride(2))
-        do_strides = (0, do.stride(1), do.stride(0), do.stride(2))
+
+        stride_T = num_q_heads * head_sz
+        stride_H = head_sz
+        stride_D = 1
+
+        q_strides  = (0, stride_H, stride_T, stride_D)
+        k_strides  = (0, stride_H, stride_T, stride_D)
+        v_strides  = (0, stride_H, stride_T, stride_D)
+        o_strides  = (0, stride_H, stride_T, stride_D)
+        dq_strides = (0, stride_H, stride_T, stride_D)
+        dk_strides = (0, stride_H, stride_T, stride_D)
+        do_strides = (0, stride_H, stride_T, stride_D)
+
     else:
         # Layout for q,k,v is bshd ie [batch, seq_len, num_head, head_dim]
         batch, seqlen_q, num_q_heads, head_sz = q.shape
         _, num_k_heads = k.shape[1], k.shape[2]
-        q_strides = (q.stride(0), q.stride(2), q.stride(1), q.stride(3))
-        k_strides = (k.stride(0), k.stride(2), k.stride(1), k.stride(3))
-        v_strides = (v.stride(0), v.stride(2), v.stride(1), v.stride(3))
-        o_strides = (o.stride(0), o.stride(2), o.stride(1), o.stride(3))
-        dq_strides = (dq.stride(0), dq.stride(2), dq.stride(1), dq.stride(3))
-        dk_strides = (dk.stride(0), dk.stride(2), dk.stride(1), dk.stride(3))
-        do_strides = (do.stride(0), do.stride(2), do.stride(1), do.stride(3))
+
+        stride_B = seqlen_q * num_q_heads * head_sz
+        stride_S = num_q_heads * head_sz
+        stride_H = head_sz
+        stride_D = 1
+
+        q_strides  = (stride_B, stride_H, stride_S, stride_D)
+        k_strides  = (stride_B, stride_H, stride_S, stride_D)
+        v_strides  = (stride_B, stride_H, stride_S, stride_D)
+        o_strides  = (stride_B, stride_H, stride_S, stride_D)
+        dq_strides = (stride_B, stride_H, stride_S, stride_D)
+        dk_strides = (stride_B, stride_H, stride_S, stride_D)
+        do_strides = (stride_B, stride_H, stride_S, stride_D)
 
     # BLOCK_D_MODEL, BLOCK_D_MODEL_POW2
     # padding for head_dim. Power of 2 or 16
@@ -93,12 +102,13 @@ def flash_attn_fused_backward(
 
     # init delta
     delta = jnp.zeros_like(softmax_lse)
+    total_tokens, num_q_heads, seqlen_q = delta.shape
     if IS_VARLEN:
         # [total_tokens, num_q_heads, seqlen_q]
-        delta_strides = (0, delta.stride(1), delta.stride(0))
+        delta_strides = (0, seqlen_q, num_q_heads * seqlen_q)
     else:
         # [batch, num_q_heads, seqlen_q]
-        delta_strides = delta.stride()
+        delta_strides = (num_q_heads * seqlen_q, seqlen_q, 1)
 
     # preprocess
     # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
@@ -131,8 +141,7 @@ def flash_attn_fused_backward(
 
     out_shape = jax.ShapeDtypeStruct(shape=delta.shape, dtype=delta.dtype)
     pre_grid = (
-        # triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
-        triton.cdiv(max_seqlen_q, PRE_BLOCK),
+        triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
         batch,
         num_q_heads,
     )
@@ -167,7 +176,12 @@ def flash_attn_fused_backward(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
             dtype=jnp.float32,
         )
-        dropout_strides = dropout_mask.stride()
+        dropout_strides = (
+            num_q_heads * max_seqlen_q * max_seqlen_k,
+            max_seqlen_q * max_seqlen_k,
+            max_seqlen_k,
+            1,
+        )
     else:
         dropout_mask = None
         dropout_strides = (0, 0, 0, 0)
@@ -246,9 +260,50 @@ def flash_attn_fused_backward(
     return dv, dk
 
 
+def mha_fwd_reference(q, k, v, causal=True, sm_scale=None):
+    """Reference forward using JAX numpy to produce out and softmax_lse.
+
+    Returns:
+        out: [B, Lq, H, D]  (same layout as q/k/v in your code: b, s, h, d)
+        softmax_lse: [B, H, Lq]  (logsumexp per query position)
+    """
+    B, Lq, H, D = q.shape
+    max_seqlen_q = SEQ_LEN
+    if sm_scale is None:
+        sm_scale = 1.0 / math.sqrt(D)
+
+    # compute logits: [B, H, Lq, Lk]
+    # q: [B, Lq, H, D]  -> transpose to [B, H, Lq, D]
+    qT = jnp.transpose(q, (0, 2, 1, 3))
+    kT = jnp.transpose(k, (0, 2, 1, 3))
+
+    # einsum for clarity: [B, H, Lq, D] @ [B, H, D, Lk] -> [B, H, Lq, Lk]
+    logits = jnp.einsum("bhqd,bhkd->bhqk", qT, kT) * sm_scale
+
+    # causal mask: allow j <= i
+    if causal:
+        # mask shape [Lq, Lk]
+        mask = jnp.tril(jnp.ones((Lq, max_seqlen_q), dtype=logits.dtype))
+        logits = jnp.where(mask[None, None, :, :] == 1, logits, -jnp.inf)
+
+    # compute softmax weights and out
+    # jax.nn.softmax handles numeric stability internally (uses logsumexp)
+    weights = jax.nn.softmax(logits, axis=-1)  # shape [B, H, Lq Lk]
+    vT = jnp.transpose(v, (0, 2, 1, 3))  # [B, H, Lk, D]
+    outT = jnp.einsum("bhqk,bhkd->bhqd", weights, vT)  # [B, H, Lq, D]
+
+    # transpose back to [B, Lq, H, D] to match your function's expected layout
+    out = jnp.transpose(outT, (0, 2, 1, 3))
+
+    # softmax_lse = logsumexp(logits, axis=-1), shape [B, H, Lq]
+    softmax_lse = jax.scipy.special.logsumexp(logits, axis=-1)
+
+    return out, softmax_lse
+
+
 # MHA shape
 BATCH_SIZE: int = 2
-SEQ_LEN: int = 4096
+SEQ_LEN: int = 1024
 NUM_HEADS: int = 64
 HEAD_SIZE: int = 128
 
@@ -263,7 +318,7 @@ RNG_SEED = 42
 
 def main(unused_argv):
     # generate random key
-    jax.random.PRNGKey(RNG_SEED)
+    key = jax.random.PRNGKey(RNG_SEED)
     q_key, k_key, v_key, do_key = jax.random.split(key, 4)
 
     # fwd inputs
@@ -289,7 +344,7 @@ def main(unused_argv):
     dk = jnp.zeros_like(k)
     dv = jnp.zeros_like(v)
 
-    # call function
+    # jax-triton mha fused bwd
     dv, dk = flash_attn_fused_backward(
         # inputs
         q=q,
