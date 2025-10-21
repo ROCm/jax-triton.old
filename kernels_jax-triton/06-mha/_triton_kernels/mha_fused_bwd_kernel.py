@@ -261,7 +261,8 @@ def _bwd_kernel_dkdvdq_causal(
     # inputs
     q_ptr, k_ptr, v_ptr,
     do_ptr,
-    m_ptr, delta_ptr,
+    m_ptr, 
+    delta_ptr,
     sm_scale,
     # outputs
     dk_ptr, dv_ptr, dq_ptr,
@@ -587,7 +588,8 @@ def _bwd_kernel_dkdvdq_noncausal(
     # inputs
     Q, K, V,
     DO,
-    M, Delta,
+    M, 
+    Delta,
     sm_scale,
     # outputs
     DK, DV, DQ,

@@ -102,16 +102,12 @@ def flash_attn_fused_backward(
 
     # init delta
     delta = jnp.zeros_like(softmax_lse)
-    total_tokens, num_q_heads, seqlen_q = delta.shape
     if IS_VARLEN:
-        # [total_tokens, num_q_heads, seqlen_q]
+        total_tokens, num_q_heads, seqlen_q = delta.shape
         delta_strides = (0, seqlen_q, num_q_heads * seqlen_q)
     else:
-        # [batch, num_q_heads, seqlen_q]
+        batch, num_q_heads, seqlen_q = delta.shape
         delta_strides = (num_q_heads * seqlen_q, seqlen_q, 1)
-
-    # preprocess
-    # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
 
     # if config is None:
     #     config = _get_config()
@@ -138,6 +134,9 @@ def flash_attn_fused_backward(
             "matrix_instr_nonkdim": 16
         },
     }
+
+    # preprocess
+    # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
 
     out_shape = jax.ShapeDtypeStruct(shape=delta.shape, dtype=delta.dtype)
     pre_grid = (
@@ -192,7 +191,7 @@ def flash_attn_fused_backward(
     else:
         config_dkdvdq = config["dkdvdq_kernel_N128"]
 
-    num_k_pids = (max_seqlen_k + BLOCK_N - 1) // BLOCK_N
+    num_k_pids = (max_seqlen_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq["BLOCK_N"]
     # NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
 
     metaparams = dict(
@@ -224,11 +223,12 @@ def flash_attn_fused_backward(
         jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),        
     )
 
-    dv, dk = jt.triton_call(
+    dk, dv, dq = jt.triton_call(
         # inputs
         q, k, v,
         do,
-        softmax_lse, delta,
+        softmax_lse, 
+        delta,
         sm_scale,
         # outputs
         dk, dv, dq,
@@ -257,7 +257,7 @@ def flash_attn_fused_backward(
         **config_dkdvdq
     )
 
-    return dv, dk
+    return dk, dv, dq
 
 
 def mha_fwd_reference(q, k, v, causal=True, sm_scale=None):
@@ -345,7 +345,7 @@ def main(unused_argv):
     dv = jnp.zeros_like(v)
 
     # jax-triton mha fused bwd
-    dv, dk = flash_attn_fused_backward(
+    dk, dv, dq = flash_attn_fused_backward(
         # inputs
         q=q,
         k=k,
