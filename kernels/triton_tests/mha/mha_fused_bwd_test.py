@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
-import triton_mha_bwd_kernel as backend  # adjust import to wherever you've defined gmm
 import jax_triton as jt
+import ..triton.mha.mha_fused_bwd as backend  # adjust import to wherever you've defined the kernel
 
 from absl.testing import absltest, parameterized
 
@@ -12,7 +12,7 @@ from common import (
 )
 
 
-class MHAFWDTest(parameterized.TestCase):
+class MHABWDTest(parameterized.TestCase):
   @parameterized.named_parameters(
       # (test_name, shape(B, S, H, D), dtype)
       ("mha_test1", (2, 1024, 32, 128), jnp.float32),
@@ -39,7 +39,7 @@ class MHAFWDTest(parameterized.TestCase):
     out = jnp.transpose(out, (0, 2, 1, 3))
     
     # expected via JAX ragged_dot
-    expected = jax_attn_fwd_reference(q, k, v)
+    expected = jax_attn_bwd_reference(q, k, v)
     expected.block_until_ready()
     expected = jnp.transpose(expected, (0, 2, 1, 3))
 
