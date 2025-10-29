@@ -90,12 +90,12 @@ def _bwd_preprocess(
 
 @triton.jit
 def _bwd_dkdvdq_inner(
+    # Output tensors
+    dk, dv, DQ,    # output gradients
     # Input tensors
     Q, k, v,        # fwd inputs
     DO,             # upstream gradient
     M, D,           # softmax caches for bwd
-    # Output tensors
-    DQ, dk, dv,     # output gradients
     # Strides
     stride_q_m, stride_q_k,
     stride_dq_m, stride_dq_k,
@@ -501,12 +501,13 @@ def _bwd_kernel_dkdvdq_causal(
     # if unaligned start_m is negative, the current N-tile has no block on the
     #   diagonal of causal mask, so everything have no causal mask
     dk, dv = _bwd_dkdvdq_inner(
+        # Output tensors
+        dk, dv, dq_ptr_adj,
         # Input tensors
         q_ptr_adj, k, v,
         do_ptr_adj,
-        m_ptr_adj, delta_ptr_adj,
-        # Output tensors
-        dq_ptr_adj, dk, dv,
+        m_ptr_adj,
+        delta_ptr_adj,
         # Strides
         stride_q_m, stride_q_k,  # strides for q
         stride_dq_m, stride_dq_k,  # strides for dq
@@ -537,12 +538,13 @@ def _bwd_kernel_dkdvdq_causal(
     num_steps = tl.cdiv(seqlen_q - start_m, BLOCK_M)
 
     dk, dv = _bwd_dkdvdq_inner(
+        # Output tensors
+        dk, dv, dq_ptr_adj,
         # Input tensors
         q_ptr_adj, k, v,
         do_ptr_adj,
-        m_ptr_adj, delta_ptr_adj,
-        # Output tensors
-        dq_ptr_adj, dk, dv,
+        m_ptr_adj,
+        delta_ptr_adj,
         # Strides
         stride_q_m, stride_q_k,  # strides for q
         stride_dq_m, stride_dq_k,  # strides for q
@@ -770,12 +772,13 @@ def _bwd_kernel_dkdvdq_noncausal(
         num_steps = tl.cdiv(seqlen_q, BLOCK_M)
 
         dk, dv = _bwd_dkdvdq_inner(
+            # Output tensors
+            dk, dv, DQ_ptr,
             # Input tensors
             Q_ptr, k, v,
             DO_ptr,
-            M_ptr, Delta_ptr,
-            # Output tensors
-            DQ_ptr, dk, dv,
+            M_ptr,
+            Delta_ptr,
             # Strides
             stride_qm, stride_qk,
             stride_dqm, stride_dqk,

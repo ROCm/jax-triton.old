@@ -10,41 +10,43 @@ import jax
 import jax.numpy as jnp
 import jax_triton as jt
 
-from aiter.ops.triton.utils.logger import AiterTritonLogger
-from aiter.ops.triton._triton_kernels.mha_onekernel_bwd import (
+from utils.logger import AiterTritonLogger
+from aiter.ops.triton._triton_kernels.mha_onekernel_bwd_kernel import (
     _bwd_preprocess,
     bwd_kernel_causal,
     bwd_kernel_noncausal,
     _get_config,
 )
 
+
 _LOGGER = AiterTritonLogger()
 
 
-# NOTE: triton fails to import tl.constexprs so create them here for the file
-DROPOUT_USE_PYTORCH = False
-DROPOUT_DUMP = False
-
-tl_DROPOUT_USE_PYTORCH: tl.constexpr = triton.language.constexpr(DROPOUT_USE_PYTORCH)
-tl_DROPOUT_DUMP: tl.constexpr = triton.language.constexpr(DROPOUT_DUMP)
+def safe_tensor(x):
+    if x is None:
+        return jnp.zeros((1,), dtype=jnp.int32)
+    return x
 
 
 def flash_attn_onekernel_backward(
-    do: torch.Tensor,
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    o: torch.Tensor,
-    softmax_lse: torch.Tensor,
-    dq: torch.Tensor,
-    dk: torch.Tensor,
-    dv: torch.Tensor,
-    dbias: torch.Tensor,
+    # Input tensors
+    do: jnp.ndarray,
+    q: jnp.ndarray,
+    k: jnp.ndarray,
+    v: jnp.ndarray,
+    o: jnp.ndarray,
+    softmax_lse: jnp.ndarray,
+    # Output tensors
+    dq: jnp.ndarray,
+    dk: jnp.ndarray,
+    dv: jnp.ndarray,
+    dbias: jnp.ndarray,
+    # Configurations
     sm_scale: float,
-    alibi_slopes: Optional[torch.Tensor],
+    alibi_slopes: Optional[jnp.ndarray],
     causal: bool,
-    cu_seqlens_q: Optional[torch.Tensor],
-    cu_seqlens_k: Optional[torch.Tensor],
+    cu_seqlens_q: Optional[jnp.ndarray],
+    cu_seqlens_k: Optional[jnp.ndarray],
     max_seqlen_q: int,
     max_seqlen_k: int,
     dropout_p: float,
@@ -66,6 +68,15 @@ def flash_attn_onekernel_backward(
 
     IS_VARLEN = True if cu_seqlens_q is not None else False
 
+    q_strides_in = jt.strides_from_shape(q.shape)
+    k_strides_in = jt.strides_from_shape(k.shape)
+    v_strides_in = jt.strides_from_shape(v.shape)
+    o_strides_in = jt.strides_from_shape(o.shape)
+    dq_strides_in = jt.strides_from_shape(dq.shape)
+    dk_strides_in = jt.strides_from_shape(dk.shape)
+    dv_strides_in = jt.strides_from_shape(dv.shape)
+    do_strides_in = jt.strides_from_shape(do.shape)
+
     # get strides and shape
     if IS_VARLEN:
         # Layout for q,k,v is thd ie [total tokens, num_head, head_dim]
@@ -76,45 +87,46 @@ def flash_attn_onekernel_backward(
             q.shape[2],
         )
         _, num_k_heads = max_seqlen_k, k.shape[1]
-        q_strides = (0, q.stride(1), q.stride(0), q.stride(2))
-        q_strides = (0, q.stride(1), q.stride(0), q.stride(2))
-        k_strides = (0, k.stride(1), k.stride(0), k.stride(2))
-        v_strides = (0, v.stride(1), v.stride(0), v.stride(2))
-        o_strides = (0, o.stride(1), o.stride(0), o.stride(2))
-        dq_strides = (0, dq.stride(1), dq.stride(0), dq.stride(2))
-        dk_strides = (0, dk.stride(1), dk.stride(0), dk.stride(2))
-        dv_strides = (0, dv.stride(1), dv.stride(0), dv.stride(2))
-        do_strides = (0, do.stride(1), do.stride(0), do.stride(2))
+        num_k_heads = k.shape[1]
+        q_strides = (0, q_strides_in[1], q_strides_in[0], q_strides_in[2])
+        k_strides = (0, k_strides_in[1], k_strides_in[0], k_strides_in[2])
+        v_strides = (0, v_strides_in[1], v_strides_in[0], v_strides_in[2])
+        o_strides = (0, o_strides_in[1], o_strides_in[0], o_strides_in[2])
+        dq_strides = (0, dq_strides_in[1], dq_strides_in[0], dq_strides_in[2])
+        dk_strides = (0, dk_strides_in[1], dk_strides_in[0], dk_strides_in[2])
+        dv_strides = (0, dv_strides_in[1], dv_strides_in[0], dv_strides_in[2])
+        do_strides = (0, do_strides_in[1], do_strides_in[0], do_strides_in[2])
     else:
         # Layout for q,k,v is bshd ie [batch, seq_len, num_head, head_dim]
         batch, seqlen_q, num_q_heads, head_sz = q.shape
-        _, num_k_heads = k.shape[1], k.shape[2]
-        q_strides = (q.stride(0), q.stride(2), q.stride(1), q.stride(3))
-        k_strides = (k.stride(0), k.stride(2), k.stride(1), k.stride(3))
-        v_strides = (v.stride(0), v.stride(2), v.stride(1), v.stride(3))
-        o_strides = (o.stride(0), o.stride(2), o.stride(1), o.stride(3))
-        dq_strides = (dq.stride(0), dq.stride(2), dq.stride(1), dq.stride(3))
-        dk_strides = (dk.stride(0), dk.stride(2), dk.stride(1), dk.stride(3))
-        dv_strides = (dv.stride(0), dv.stride(2), dv.stride(1), dv.stride(3))
-        do_strides = (do.stride(0), do.stride(2), do.stride(1), do.stride(3))
+        num_k_heads = k.shape[2]
+        q_strides = (q_strides_in[0], q_strides_in[2], q_strides_in[1], q_strides_in[3])
+        k_strides = (k_strides_in[0], k_strides_in[2], k_strides_in[1], k_strides_in[3])
+        v_strides = (v_strides_in[0], v_strides_in[2], v_strides_in[1], v_strides_in[3])
+        o_strides = (o_strides_in[0], o_strides_in[2], o_strides_in[1], o_strides_in[3])
+        dq_strides = (dq_strides_in[0], dq_strides_in[2], dq_strides_in[1], dq_strides_in[3])
+        dk_strides = (dk_strides_in[0], dk_strides_in[2], dk_strides_in[1], dk_strides_in[3])
+        dv_strides = (dv_strides_in[0], dv_strides_in[2], dv_strides_in[1], dv_strides_in[3])
+        do_strides = (do_strides_in[0], do_strides_in[2], do_strides_in[1], do_strides_in[3])
 
     # BLOCK_D_MODEL, BLOCK_D_MODEL_POW2
     # padding for head_dim. Power of 2 or 16
     BLOCK_D_MODEL_POW2 = triton.next_power_of_2(head_sz)
     BLOCK_D_MODEL_POW2 = max(BLOCK_D_MODEL_POW2, 16)
 
+    # init delta
+    delta = jnp.zeros_like(softmax_lse)
+    delta_strides_in = jt.strides_from_shape(delta.shape)
+    if IS_VARLEN:
+        # [total_tokens, num_q_heads, seqlen_q]
+        delta_strides = (0, delta_strides_in[1], delta_strides_in[0])
+    else:
+        # [batch, num_q_heads, seqlen_q]
+        delta_strides = delta_strides_in
+
     # Configs
     if config is None:
         config = _get_config()
-
-    # init delta
-    delta = torch.zeros_like(softmax_lse)
-    if IS_VARLEN:
-        # [total_tokens, num_q_heads, seqlen_q]
-        delta_strides = (0, delta.stride(1), delta.stride(0))
-    else:
-        # [batch, num_q_heads, seqlen_q]
-        delta_strides = delta.stride()
 
     # preprocess
     # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
@@ -123,31 +135,37 @@ def flash_attn_onekernel_backward(
         batch,
         num_q_heads,
     )
-    _bwd_preprocess[pre_grid](
-        o,
-        do,
-        delta,
-        *o_strides,
-        *delta_strides,
-        descale_strides[3],
-        cu_seqlens_q,
-        max_seqlen_q,
-        descale_do,
+    out_shape = jax.ShapeDtypeStruct(shape=delta.shape, dtype=delta.dtype)
+
+    metaparams_pre = dict(
         BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
         BLOCK_D_MODEL=head_sz,
         BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
         IS_VARLEN=IS_VARLEN,
     )
 
+    delta = jt.triton_call(
+        o,
+        do,
+        delta,
+        *o_strides,
+        *delta_strides,
+        safe_tensor(cu_seqlens_q),
+        max_seqlen_q,
+        kernel=_bwd_preprocess,
+        grid=pre_grid,
+        out_shape=out_shape,
+        **metaparams_pre
+    )
+
     # dropout_mask
     use_dropout = dropout_p > 0.0
     if use_dropout:
-        dropout_mask = torch.zeros(
+        dropout_mask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
-            device=q.device,
-            dtype=torch.float32,
+            dtype=jnp.float32,
         )
-        dropout_strides = dropout_mask.stride()
+        dropout_strides = jt.strides_from_shape(dropout_mask.shape)
     else:
         dropout_mask = None
         dropout_strides = (0, 0, 0, 0)
@@ -155,6 +173,19 @@ def flash_attn_onekernel_backward(
     seqlen = max(max_seqlen_q, max_seqlen_k)
 
     config_onekernel = config["onekernel"]
+
+    metaparams = dict(
+        HEAD_DIM=head_sz,
+        ACTUAL_HEAD_DIM=BLOCK_D_MODEL_POW2,
+        ENABLE_DROPOUT=use_dropout,
+        IS_VARLEN=IS_VARLEN,
+        USE_ALIBI=use_alibi,
+        USE_EXP2=True,
+        DEBUG_TRITON=False,
+        DEBUG_TRITON_DETAIL=False,
+        USE_INT64_STRIDES=USE_INT64_STRIDES,
+    )
+
     grid = (
         num_k_heads,
         triton.cdiv(seqlen, config_onekernel["BLOCK_N1"]),
@@ -162,96 +193,54 @@ def flash_attn_onekernel_backward(
     )
 
     if causal:
-        bwd_kernel_causal[grid](
-            q,
-            k,
-            v,
-            sm_scale,
-            do,
-            dq,
-            dk,
-            dv,
-            softmax_lse,
-            delta,
-            *q_strides,
-            *k_strides,
-            *v_strides,
-            *dq_strides,
-            *dk_strides,
-            *dv_strides,
-            *delta_strides,
-            *do_strides,
-            *dropout_strides,
-            *descale_strides,
-            stride_az,
-            stride_ah,
-            num_q_heads,
-            num_k_heads,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_mask,
-            dropout_p,
-            philox_seed,
-            philox_offset,
-            alibi_slopes,
-            HEAD_DIM=head_sz,
-            ACTUAL_HEAD_DIM=BLOCK_D_MODEL_POW2,
-            ENABLE_DROPOUT=use_dropout,
-            IS_VARLEN=IS_VARLEN,
-            USE_ALIBI=use_alibi,
-            USE_EXP2=True,
-            DEBUG_TRITON=False,
-            DEBUG_TRITON_DETAIL=False,
-            USE_INT64_STRIDES=USE_INT64_STRIDES,
-            **config_onekernel,
-        )
+        kernel = bwd_kernel_causal
     else:
-        bwd_kernel_noncausal[grid](
-            q,
-            k,
-            v,
-            sm_scale,
-            do,
-            dq,
-            dk,
-            dv,
-            softmax_lse,
-            delta,
-            *q_strides,
-            *k_strides,
-            *v_strides,
-            *dq_strides,
-            *dk_strides,
-            *dv_strides,
-            *delta_strides,
-            *do_strides,
-            *dropout_strides,
-            *descale_strides,
-            stride_az,
-            stride_ah,
-            num_q_heads,
-            num_k_heads,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_mask,
-            dropout_p,
-            philox_seed,
-            philox_offset,
-            alibi_slopes,
-            HEAD_DIM=head_sz,
-            ACTUAL_HEAD_DIM=BLOCK_D_MODEL_POW2,
-            ENABLE_DROPOUT=use_dropout,
-            IS_VARLEN=IS_VARLEN,
-            USE_ALIBI=use_alibi,
-            USE_EXP2=True,
-            DEBUG_TRITON=False,
-            DEBUG_TRITON_DETAIL=False,
-            USE_INT64_STRIDES=USE_INT64_STRIDES,
-            **config_onekernel,
-        )
+        kernel = bwd_kernel_noncausal
 
-    return delta
+    out_shape = [
+        jax.ShapeDtypeStruct(shape=dk.shape, dtype=dk.dtype),
+        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),
+        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),        
+    ]
+
+    dq, dk, dv = jt.triton_call(
+        # Input tensors
+        q, k, v,
+        do,
+        softmax_lse, 
+        delta,
+        # Output tensors
+        dq, dk, dv,
+        # Strides
+        *q_strides,
+        *k_strides,
+        *v_strides,
+        *dq_strides,
+        *dk_strides,
+        *dv_strides,
+        *delta_strides,
+        *do_strides,
+        *dropout_strides,
+        stride_az,
+        stride_ah,
+        # Configurations
+        sm_scale,
+        num_q_heads,
+        num_k_heads,
+        safe_tensor(cu_seqlens_q),
+        safe_tensor(cu_seqlens_k),
+        max_seqlen_q,
+        max_seqlen_k,
+        dropout_mask,
+        dropout_p,
+        philox_seed,
+        philox_offset,
+        alibi_slopes,
+        kernel=kernel,
+        out_shape=out_shape,
+        grid=grid,
+        **metaparams,
+        **config_onekernel
+    )
+
+    return dq, dk, dv
