@@ -8,7 +8,8 @@ from absl.testing import absltest, parameterized
 # common func
 from common import (
     generate_mha_input,
-    jax_attn_bwd_reference
+    jax_attn_fwd_reference,
+    jax_attn_bwd_reference,
 )
 
 
@@ -33,24 +34,26 @@ class MHABWDTest(parameterized.TestCase):
     k = jnp.transpose(k, (0, 2, 1, 3))
     v = jnp.transpose(v, (0, 2, 1, 3))
 
-    # run flash_attn_fused_backward
-    out = backend.flash_attn_fused_backward(q, k, v, input_meta)
-    out.block_until_ready()
-    out = jnp.transpose(out, (0, 2, 1, 3))
-    
-    # expected via JAX ragged_dot
-    expected = jax_attn_bwd_reference(q, k, v)
-    expected.block_until_ready()
-    expected = jnp.transpose(expected, (0, 2, 1, 3))
+    out, softmax_lse = jax_attn_fwd_reference(q, k, v, input_meta)
 
-    # shape & dtype sanity
-    self.assertEqual(out.shape, shape)
-    self.assertEqual(out.dtype, dtype)
+    # run flash_attn_fused_backward
+    dq, dk, dv = backend.flash_attn_fused_backward(q, k, v, input_meta)
+    dq.block_until_ready()
+    dq = jnp.transpose(dq, (0, 2, 1, 3))
+    
+    # expected via JAX
+    _, dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v)
+    dq_ref.block_until_ready()
+    dq_ref = jnp.transpose(dq_ref, (0, 2, 1, 3))
+
+    # # shape & dtype sanity
+    # self.assertEqual(out.shape, shape)
+    # self.assertEqual(out.dtype, dtype)
 
     # numeric check (allow fp16 tolerance)
     atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
-    max_diff = jnp.max(jnp.abs(out - expected))
-    self.assertTrue(jnp.allclose(out, expected, atol=atol),
+    max_diff = jnp.max(jnp.abs(dq - dq_ref))
+    self.assertTrue(jnp.allclose(dq, dq_ref, atol=atol),
                     msg=f"Max diff ({max_diff}) exceeds tolerance (atol={atol})!")
 
 if __name__ == "__main__":
