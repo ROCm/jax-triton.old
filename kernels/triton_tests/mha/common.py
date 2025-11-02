@@ -176,31 +176,37 @@ def mha_input_helper(
     return q, k, v, input_metadata  
 
 
-def jax_attn_fwd_reference(q, k, v, dy=None):
+def jax_attn_fwd_reference(q, k, v, causal=True, sm_scale=None):
     """
+    Compute attention output and softmax_lse
+
     Args:
         q, k, v: [batch, heads, seq_len, head_dim]
-        dy: optional upstream gradient [batch, heads, seq_len, head_dim]
-    
-    Returns:
-        y: [batch, heads, seq_len, head_dim]
-        (dq, dk, dv): gradients, all [batch, heads, seq_len, head_dim]
+
+    Returns:        
+        out: [batch, heads, seq_len, head_dim]
+        softmax_lse: [batch, heads, seq_len]
     """
 
     _, _, seq_len, head_dim = q.shape
     dtype = q.dtype
 
-    # Scaled dot-product attention
-    logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)).astype("float32") / jnp.sqrt(head_dim)  # [B, H, N, N]
+    # einsum for clarity: [B, H, Lq, D] @ [B, H, D, Lk] -> [B, H, Lq, Lk]
+    logits = jnp.einsum("bhqd,bhkd->bhqk", q, k) * sm_scale
 
-    # Causal mask: lower triangular
-    # mask = jnp.tril(jnp.ones((1, 1, seq_len, seq_len), dtype=q.dtype))
-    # logits = jnp.where(mask == 1, logits, -jnp.inf)
+    # causal mask: allow j <= i
+    if causal:
+        # mask shape [Lq, Lk]
+        mask = jnp.tril(jnp.ones((Lq, max_seqlen_q), dtype=logits.dtype))
+        logits = jnp.where(mask[None, None, :, :] == 1, logits, -jnp.inf)
 
-    weights = jax.nn.softmax(logits, axis=-1)  # Softmax along keys
-    output = jnp.matmul(weights, v)            # [B, H, N, d_v]
+    weights = jax.nn.softmax(logits, axis=-1)  # [B, H, Lq, Lk]
+    out = jnp.einsum("bhqk,bhkd->bhqd", weights, v)  # [B, H, Lq, D]
 
-    return output.astype(dtype)
+    # softmax_lse = logsumexp(logits, axis=-1), shape [B, H, Lq]
+    softmax_lse = jax.scipy.special.logsumexp(logits, axis=-1)
+
+    return out, softmax_lse
 
 
 def jax_attn_bwd_reference(q, k, v, dy=None):
@@ -238,33 +244,3 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
     (dq_, dk_, dv_), = vjp_fn(dy)
 
     return y_, (dq_, dk_, dv_)
-
-
-def ragged_dot_reference(
-    lhs,
-    rhs,
-    group_sizes,
-) -> np.array:
-  """Reference ragged dot implementation."""
-  m, lk = lhs.shape
-  group_count, rk, n = rhs.shape
-  assert lk == rk
-  assert group_count == group_sizes.shape[0]
-  assert lhs.dtype == rhs.dtype
-
-  out = np.zeros((m, n), dtype=lhs.dtype)
-  result_iota = np.expand_dims(np.arange(out.shape[0]), list(range(1, out.ndim)))
-  start = 0
-  for i, size in enumerate(group_sizes):
-    out += np.where(
-        np.logical_and(start <= result_iota, result_iota < (start + size)),
-        np.einsum(
-          "nk,km->nm",
-          lhs,
-          rhs[i, :, :],
-          dtype=np.float32 if lhs.dtype == dtypes.bfloat16 else np.float32,
-        ),
-        np.zeros(out.shape, dtype=out.dtype),
-    )
-    start += size
-  return out.astype(dtypes.bfloat16) if lhs.dtype == dtypes.bfloat16 else out
