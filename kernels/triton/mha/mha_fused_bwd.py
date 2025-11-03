@@ -235,6 +235,14 @@ def flash_attn_fused_backward(do, q, k, v, input_meta):
     # save fwd outputs for bwd
     o, softmax_lse = jax_attn_fwd_reference(q, k, v)
 
+    # Transpose to (B, S, H, D)
+    do = jnp.transpose(do, (0, 2, 1, 3))
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
+    o = jnp.transpose(o, (0, 2, 1, 3))
+    softmax_lse = jnp.transpose(softmax_lse, (0, 2, 1))
+
     # initialize output gradients
     dq = jnp.zeros_like(q)
     dk = jnp.zeros_like(k)
@@ -268,15 +276,20 @@ def flash_attn_fused_backward(do, q, k, v, input_meta):
         **input_metaparams
     )
 
+    # Transpose to (B, H, S, D)
+    dq = jnp.transpose(dq, (0, 2, 1, 3))
+    dk = jnp.transpose(dk, (0, 2, 1, 3))
+    dv = jnp.transpose(dv, (0, 2, 1, 3))
+
     return dq, dk, dv
 
 
 # MHA shape
 BATCH_SIZE: int = 2
-SEQ_LEN: int = 1024
 NUM_HEADS: int = 64
+SEQ_LEN: int = 1024
 HEAD_SIZE: int = 128
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
 
 # MHA dtype
@@ -290,11 +303,6 @@ def main(unused_argv):
     q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
     input_meta.need_causal()
 
-    # Transpose to (B, H, S, D)
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
-
     # random upstream gradient
     key = jax.random.PRNGKey(RNG_SEED)
     do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
@@ -302,12 +310,10 @@ def main(unused_argv):
     # Triton results
     dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
     dq.block_until_ready()
-    dq = jnp.transpose(dq, (0, 2, 1, 3))
 
     # Reference results
     dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
     dq_ref.block_until_ready()
-    dq_ref = jnp.transpose(dq_ref, (0, 2, 1, 3))
 
     # numeric check
     atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3

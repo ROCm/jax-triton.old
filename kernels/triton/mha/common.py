@@ -12,10 +12,10 @@ import jax_triton as jt
 
 # MHA Shape
 BATCH_SIZE: int = 2
-SEQ_LEN: int = 4096
 NUM_HEADS: int = 64
+SEQ_LEN: int = 4096
 HEAD_SIZE: int = 128
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
 
 # MHA dtype
@@ -130,7 +130,7 @@ class MhaMetaData():
         assert (nheads_q % nheads_k) == 0    
 
 
-# q.shape = k.shape = v.shape = (B, S, H, D)
+# q.shape = k.shape = v.shape = (B, H, S, D)
 def generate_mha_input(
     shape: tuple[int, ...] = MHA_SHAPE, 
     dtype: jnp.dtype = MHA_DTYPE
@@ -143,8 +143,8 @@ def generate_mha_input(
 
     sm_scale = shape[-1] ** -0.5
     input_metadata = MhaMetaData(sm_scale=sm_scale)
-    input_metadata.max_seqlens_q = shape[1]
-    input_metadata.max_seqlens_k = shape[1]
+    input_metadata.max_seqlens_q = shape[2]
+    input_metadata.max_seqlens_k = shape[2]
 
     return q, k, v, input_metadata
 
