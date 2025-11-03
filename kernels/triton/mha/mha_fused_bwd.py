@@ -2,7 +2,6 @@
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
 from typing import Optional, Dict
-import torch
 import triton
 import triton.language as tl
 
@@ -10,7 +9,6 @@ import jax
 import jax.numpy as jnp
 import jax_triton as jt
 
-from utils.logger import AiterTritonLogger
 from _triton_kernels.mha_fused_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_dkdvdq_causal,
@@ -24,8 +22,6 @@ from common import (
     jax_attn_bwd_reference,
 )
 
-_LOGGER = AiterTritonLogger()
-
 
 def safe_tensor(x):
     if x is None:
@@ -33,7 +29,7 @@ def safe_tensor(x):
     return x
 
 
-def flash_attn_fused_backward(
+def _flash_attn_fused_backward(
     # Input tensors
     do: jnp.ndarray,
     q: jnp.ndarray,
@@ -53,17 +49,13 @@ def flash_attn_fused_backward(
     alibi_slopes: Optional[jnp.ndarray],
     cu_seqlens_q: Optional[jnp.ndarray],
     cu_seqlens_k: Optional[jnp.ndarray],
-    max_seqlen_q: int,
-    max_seqlen_k: int,
+    max_seqlens_q: int,
+    max_seqlens_k: int,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
     USE_INT64_STRIDES: Optional[bool] = False,
     config: Optional[Dict[str, any]] = None,
 ):
-    _LOGGER.info(
-        f"FLASH_ATTN_FUSED_BKWD: do={tuple(do.shape)} q={tuple(q.shape)}  k={tuple(k.shape)}  v={tuple(v.shape)} "
-        + f"dq={tuple(dq.shape)}  dk={tuple(dk.shape)}  dv={tuple(dv.shape)}"
-    )
     if dbias is not None:
         raise ValueError("Bias is not supported yet in the Triton Backend")
 
@@ -82,7 +74,7 @@ def flash_attn_fused_backward(
         # Layout for q,k,v is thd ie [total tokens, num_head, head_dim]
         batch, seqlen_q, num_q_heads, head_sz = (
             len(cu_seqlens_q) - 1,
-            max_seqlen_q,
+            max_seqlens_q,
             q.shape[1],
             q.shape[2],
         )
@@ -128,7 +120,7 @@ def flash_attn_fused_backward(
     # preprocess
     # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
     pre_grid = (
-        triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
+        triton.cdiv(max_seqlens_q, config["preprocess_kernel"]["PRE_BLOCK"]),
         batch,
         num_q_heads,
     )
@@ -148,7 +140,7 @@ def flash_attn_fused_backward(
         *o_strides,
         *delta_strides,
         safe_tensor(cu_seqlens_q),
-        max_seqlen_q,
+        max_seqlens_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
         out_shape=out_shape,
@@ -159,7 +151,7 @@ def flash_attn_fused_backward(
     use_dropout = dropout_p > 0.0
     if use_dropout:
         dropout_mask = jnp.zeros(
-            (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
+            (batch, num_q_heads, max_seqlens_q, max_seqlens_k),
             dtype=jnp.float32,
         )
         dropout_strides = jt.strides_from_shape(dropout_mask.shape)
@@ -173,7 +165,7 @@ def flash_attn_fused_backward(
     else:
         config_dkdvdq = config["dkdvdq_kernel_N128"]
 
-    num_k_pids = (max_seqlen_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq["BLOCK_N"]
+    num_k_pids = (max_seqlens_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq["BLOCK_N"]
 
     metaparams = dict(
         NUM_Q_HEADS=num_q_heads,
@@ -223,8 +215,8 @@ def flash_attn_fused_backward(
         sm_scale,
         safe_tensor(cu_seqlens_q),
         safe_tensor(cu_seqlens_k),
-        max_seqlen_q,
-        max_seqlen_k,
+        max_seqlens_q,
+        max_seqlens_k,
         dropout_mask,
         dropout_p,
         philox_seed,
@@ -239,50 +231,28 @@ def flash_attn_fused_backward(
     return dq, dk, dv
 
 
-# MHA shape
-BATCH_SIZE: int = 2
-SEQ_LEN: int = 1024
-NUM_HEADS: int = 64
-HEAD_SIZE: int = 128
-
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
-assert all(dim > 0 for dim in MHA_SHAPE)
-
-# MHA dtype
-MHA_DTYPE = jnp.float32
-
-RNG_SEED = 42
-
-
-def main(unused_argv):
-    # generate random key
-    key = jax.random.PRNGKey(RNG_SEED)
-    q_key, k_key, v_key, do_key = jax.random.split(key, 4)
-
-    # fwd inputs
-    q = jax.random.normal(q_key, MHA_SHAPE, dtype=MHA_DTYPE)
-    k = jax.random.normal(k_key, MHA_SHAPE, dtype=MHA_DTYPE)
-    v = jax.random.normal(v_key, MHA_SHAPE, dtype=MHA_DTYPE)
-
-    # configurations
-    sm_scale = HEAD_SIZE ** -0.5
-    causal = True
-    alibi_slopes = None
-    cu_seqlens_q = cu_seqlens_k = None
-    max_seqlen_q = max_seqlen_k = SEQ_LEN
-    dropout_p = 0.2
-
+def flash_attn_fused_backward(do, q, k, v, input_meta):
     # save fwd outputs for bwd
-    o, softmax_lse = jax_attn_fwd_reference(q, k, v, sm_scale=sm_scale, causal=causal)
-    do = jax.random.normal(do_key, o.shape, dtype=MHA_DTYPE)
+    o, softmax_lse = jax_attn_fwd_reference(q, k, v)
 
-    # bwd outputs
+    # initialize output gradients
     dq = jnp.zeros_like(q)
     dk = jnp.zeros_like(k)
     dv = jnp.zeros_like(v)
 
-    # jax-triton mha fused bwd
-    dq, dk, dv = flash_attn_fused_backward(
+    # unpack meta-parameters
+    input_metaparams = dict(
+        sm_scale=input_meta.sm_scale,
+        causal=input_meta.causal,
+        dropout_p=input_meta.dropout_p,
+        alibi_slopes=input_meta.alibi_slopes,
+        cu_seqlens_q=input_meta.cu_seqlens_q,
+        cu_seqlens_k=input_meta.cu_seqlens_k,
+        max_seqlens_q=input_meta.max_seqlens_q,
+        max_seqlens_k=input_meta.max_seqlens_k,
+    )
+
+    dq, dk, dv = _flash_attn_fused_backward(
         # Input tensors
         do=do,
         q=q,
@@ -295,24 +265,42 @@ def main(unused_argv):
         dk=dk,
         dv=dv,
         dbias=None,
-        # Configurations
-        sm_scale=sm_scale,
-        causal=causal,
-        alibi_slopes=alibi_slopes,
-        cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_k=cu_seqlens_k,
-        max_seqlen_q=max_seqlen_q,
-        max_seqlen_k=max_seqlen_k,
-        dropout_p=dropout_p,
-        # philox_seed=philox_seed,
-        # philox_offset=philox_offset,
-        # USE_INT64_STRIDES=False,
-        # config=config,
+        **input_metaparams
     )
 
-    _, (dq_ref, dk_ref, dv_ref) = jax_attn_bwd_reference(q,k,v)
+    return dq, dk, dv
 
-    # numeric check (allow fp16 tolerance)
+
+# MHA shape
+BATCH_SIZE: int = 2
+SEQ_LEN: int = 1024
+NUM_HEADS: int = 64
+HEAD_SIZE: int = 128
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
+assert all(dim > 0 for dim in MHA_SHAPE)
+
+# MHA dtype
+MHA_DTYPE = jnp.float32
+
+RNG_SEED = 42
+
+
+def main(unused_argv):
+    # generate input data, causal = True
+    q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
+    input_meta.need_causal()
+
+    # random upstream gradient
+    key = jax.random.PRNGKey(RNG_SEED)
+    do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
+
+    # Triton results
+    dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
+
+    # Reference results
+    dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
+
+    # numeric check
     atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
     max_diff = jnp.max(jnp.abs(dq - dq_ref))
         

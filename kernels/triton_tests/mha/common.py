@@ -9,39 +9,29 @@ import jax.numpy as jnp
 from jax._src import dtypes
 import jax_triton as jt
 
-#numpy
-import numpy as np
-
-import ctypes
-
-
-# TODO: Figure out a sensible tiling default.
-TILING: tuple[int, int, int] = (64, 64, 64)
-
-
-# Default transposition.
-TRANS_LHS: bool = False
-TRANS_RHS: bool = False
-TRANS_OUT: bool = False
-
-def is_power_of_2(x: int) -> bool:
-    return (x > 0) and (x & (x - 1) == 0)
-
-def next_power_of_2(n: int) -> int:
-    if n < 1:
-        raise ValueError("n must be >= 1")
-    return 2 ** math.ceil(math.log2(n))
 
 # MHA Shape
 BATCH_SIZE: int = 2
 SEQ_LEN: int = 4096
 NUM_HEADS: int = 64
 HEAD_SIZE: int = 128
-MHA_DATATYPE = jnp.float32
-RNG_SEED = 42
-
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
+
+# MHA dtype
+MHA_DTYPE = jnp.float32
+
+RNG_SEED = 42
+
+
+def is_power_of_2(x: int) -> bool:
+    return (x > 0) and (x & (x - 1) == 0)
+
+
+def next_power_of_2(n: int) -> int:
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    return 2 ** math.ceil(math.log2(n))
 
 
 def get_shape_from_layout(q, k, metadata):
@@ -49,41 +39,37 @@ def get_shape_from_layout(q, k, metadata):
     nheads_k = k.shape[1]
     return batch, nheads_q, nheads_k, head_size
 
+
 # TODO: This can probably optimized to have fewer lines of code.
-#def get_strides_from_layout(q, k, v, o, metadata):
+# def get_strides_from_layout(q, k, v, o, metadata):
 def get_strides_from_layout(q, k, v, metadata):
     q_strides = jt.strides_from_shape(q.shape)
     k_strides = jt.strides_from_shape(k.shape)
     v_strides = jt.strides_from_shape(v.shape)
-    #o_strides = jt.strides_from_shape(o.shape)
+    # o_strides = jt.strides_from_shape(o.shape)
     return q_strides, k_strides, v_strides#, o_strides
 
-class MhaMetaData():
-    cu_seqlens_q = None
-    cu_seqlens_k = None
-    max_seqlens_q = 0
-    max_seqlens_k = 0
-    bias = None
-    alibi_slopes = None
-    causal = False
-    num_contexts = 0
-    varlen = False
-    dropout_p, return_encoded_softmax = 0.0, False
 
+class MhaMetaData():
     def __init__(self, sm_scale=1.0):
         self.sm_scale = sm_scale
 
-    def set_varlen_params(self, cu_seqlens_q, cu_seqlens_k):
-        self.varlen = True
-        self.cu_seqlens_q = cu_seqlens_q
-        self.cu_seqlens_k = cu_seqlens_k
-        # Without "varlen", there should still be one sequence.
-        assert len(cu_seqlens_q) >= 2
-        assert len(cu_seqlens_q) == len(cu_seqlens_k)
-        self.num_contexts = len(cu_seqlens_q) - 1
-        for i in range(0, self.num_contexts):
-            self.max_seqlens_q = max(cu_seqlens_q[i + 1].item() - cu_seqlens_q[i].item(), self.max_seqlens_q)
-            self.max_seqlens_k = max(cu_seqlens_k[i + 1].item() - cu_seqlens_k[i].item(), self.max_seqlens_k)
+        self.causal = False
+        self.dropout_p = 0.0
+        self.bias = None
+        self.alibi_slopes = None
+
+        self.varlen = False
+        self.cu_seqlens_q = None
+        self.cu_seqlens_k = None
+        self.max_seqlens_q = 0
+        self.max_seqlens_k = 0
+
+    def need_causal(self):
+        self.causal = True
+
+    def need_dropout(self, dropout_p):
+        self.dropout_p = dropout_p
 
     def need_bias(self, bias, batch, nheads, seqlen_q, seqlen_k):
         assert bias.is_cuda
@@ -99,12 +85,23 @@ class MhaMetaData():
         assert alibi_slopes.shape[1] == nheads
         self.alibi_slopes = alibi_slopes
 
-    def need_causal(self):
-        self.causal = True
-
-    def need_dropout(self, dropout_p, return_encoded_softmax):
-        self.dropout_p = dropout_p
-        self.return_encoded_softmax = return_encoded_softmax
+    def set_varlen_params(self, cu_seqlens_q, cu_seqlens_k):
+        self.varlen = True
+        self.cu_seqlens_q = cu_seqlens_q
+        self.cu_seqlens_k = cu_seqlens_k
+        # Without "varlen", there should still be one sequence.
+        assert len(cu_seqlens_q) >= 2
+        assert len(cu_seqlens_q) == len(cu_seqlens_k)
+        self.num_contexts = len(cu_seqlens_q) - 1
+        for i in range(0, self.num_contexts):
+            self.max_seqlens_q = max(
+                cu_seqlens_q[i + 1].item() - cu_seqlens_q[i].item(),
+                self.max_seqlens_q
+            )
+            self.max_seqlens_k = max(
+                cu_seqlens_k[i + 1].item() - cu_seqlens_k[i].item(),
+                self.max_seqlens_k
+            )
 
     #def check_args(self, q, k, v, o):
     def check_args(self, q, k, v):
@@ -118,9 +115,8 @@ class MhaMetaData():
             assert len(self.cu_seqlens_q) == len(self.cu_seqlens_k)
             # TODO: Remove once bias is supported with varlen
             assert self.bias is None
-            # TODO:Remove once dropout is supported with varlen
+            # TODO: Remove once dropout is supported with varlen
             assert self.dropout_p == 0.0
-            assert not self.return_encoded_softmax
         else:
             assert q.ndim == 4
             assert self.max_seqlens_q > 0 and self.max_seqlens_k > 0
@@ -130,14 +126,14 @@ class MhaMetaData():
         # TODO: Change assert if we support qkl f8 and v f16
         assert q.dtype == k.dtype and q.dtype == v.dtype
         assert head_size <= 256
-        #assert o.shape == q.shape
+        # assert o.shape == q.shape
         assert (nheads_q % nheads_k) == 0    
 
 
 # q.shape == k.shape == v.shape = (B, S, H, D)
 def generate_mha_input(
-    shape:tuple[int, ...] = MHA_SHAPE, 
-    dtype:jnp.dtype = MHA_DATATYPE
+    shape: tuple[int, ...] = MHA_SHAPE, 
+    dtype: jnp.dtype = MHA_DTYPE
 ):
 
     q_key, k_key, v_key = jax.random.split(jax.random.PRNGKey(RNG_SEED), 3)
@@ -149,6 +145,7 @@ def generate_mha_input(
     input_metadata = MhaMetaData(sm_scale=sm_scale)
     input_metadata.max_seqlens_q = shape[1]
     input_metadata.max_seqlens_k = shape[1]
+
     return q, k, v, input_metadata
 
 
@@ -161,12 +158,12 @@ def mha_input_helper(
 
     q_key, k_key, v_key = jax.random.split(jax.random.PRNGKey(RNG_SEED), 3)
 
-    q_tensor_shape = (Z, HQ, N_CTX_Q, D_HEAD)
-    k_tensor_shape = (Z, HK, N_CTX_K, D_HEAD)
+    q_shape = (Z, HQ, N_CTX_Q, D_HEAD)
+    k_shape = (Z, HK, N_CTX_K, D_HEAD)
 
-    q = jax.random.normal(q_key, q_tensor_shape, dtype=dtype)
-    k = jax.random.normal(k_key, k_tensor_shape, dtype=dtype)
-    v = jax.random.normal(v_key, k_tensor_shape, dtype=dtype)
+    q = jax.random.normal(q_key, q_shape, dtype=dtype)
+    k = jax.random.normal(k_key, k_shape, dtype=dtype)
+    v = jax.random.normal(v_key, k_shape, dtype=dtype)
 
     sm_scale = D_HEAD ** -0.5
     input_metadata = MhaMetaData(sm_scale=sm_scale)
@@ -176,7 +173,7 @@ def mha_input_helper(
     return q, k, v, input_metadata  
 
 
-def jax_attn_fwd_reference(q, k, v, causal=True, sm_scale=None):
+def jax_attn_fwd_reference(q, k, v):
     """
     Compute attention output and softmax_lse
 
@@ -188,17 +185,15 @@ def jax_attn_fwd_reference(q, k, v, causal=True, sm_scale=None):
         softmax_lse: [batch, heads, seq_len]
     """
 
-    _, _, seq_len, head_dim = q.shape
-    dtype = q.dtype
+    head_dim = q.shape[-1]
+    sm_scale = 1.0 / jnp.sqrt(head_dim)
 
     # einsum for clarity: [B, H, Lq, D] @ [B, H, D, Lk] -> [B, H, Lq, Lk]
     logits = jnp.einsum("bhqd,bhkd->bhqk", q, k) * sm_scale
 
-    # causal mask: allow j <= i
-    if causal:
-        # mask shape [Lq, Lk]
-        mask = jnp.tril(jnp.ones((Lq, max_seqlen_q), dtype=logits.dtype))
-        logits = jnp.where(mask[None, None, :, :] == 1, logits, -jnp.inf)
+    # causal mask: [Lq, Lk]
+    mask = jnp.tril(jnp.ones_like(logits))
+    logits = jnp.where(mask == 1, logits, -jnp.inf)
 
     weights = jax.nn.softmax(logits, axis=-1)  # [B, H, Lq, Lk]
     out = jnp.einsum("bhqk,bhkd->bhqd", weights, v)  # [B, H, Lq, D]
@@ -224,7 +219,8 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
 
     def attention(q, k, v):
         head_dim = q.shape[-1]
-        logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)) / jnp.sqrt(head_dim)
+        sm_scale = 1.0 / jnp.sqrt(head_dim)
+        logits = jnp.matmul(q, jnp.swapaxes(k, -2, -1)) * sm_scale
         mask = jnp.tril(jnp.ones_like(logits))
         logits = jnp.where(mask == 1, logits, -jnp.inf)
         weights = jax.nn.softmax(logits, axis=-1)
@@ -234,13 +230,12 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
     def attention_wrapped(qkv):
         return attention(*qkv)
 
-    y_, vjp_fn = jax.vjp(attention_wrapped, (q, k, v))
+    y, vjp_fn = jax.vjp(attention_wrapped, (q, k, v))
 
     if dy is None:
-        dy = jnp.ones_like(y_)  # Default upstream gradient
-    else:
-        dy = jnp.transpose(dy, (0, 2, 1, 3))
+        dy = jnp.ones_like(y)  # Default upstream gradient
 
-    (dq_, dk_, dv_), = vjp_fn(dy)
+    (dq, dk, dv), = vjp_fn(dy)
 
-    return y_, (dq_, dk_, dv_)
+    return dq, dk, dv
+

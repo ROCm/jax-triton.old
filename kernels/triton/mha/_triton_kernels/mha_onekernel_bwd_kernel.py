@@ -7,9 +7,6 @@ import json
 import torch
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
-from ..utils._triton import arch_info
-from ..utils.core import AITER_TRITON_CONFIGS_PATH
-from ..utils._triton.pid_preprocessing import pid_grid, remap_xcd
 
 
 # NOTE: triton fails to import tl.constexprs so create them here for the file
@@ -37,7 +34,7 @@ def _bwd_preprocess(
     stride_delta_b, stride_delta_h, stride_delta_m,
     # Configurations
     cu_seqlens_q,
-    max_seqlen_q,
+    max_seqlens_q,
     # Meta-parameters
     BLOCK_M: tl.constexpr,
     BLOCK_D_MODEL: tl.constexpr,
@@ -50,14 +47,14 @@ def _bwd_preprocess(
 
     # Handle varlen
     q_start = 0
-    seqlen_q = max_seqlen_q
+    seqlen_q = max_seqlens_q
     if IS_VARLEN:
         q_start = tl.load(cu_seqlens_q + bid)
         q_end = tl.load(cu_seqlens_q + bid + 1)
         seqlen_q = q_end - q_start
     else:
         q_start = 0
-        seqlen_q = max_seqlen_q
+        seqlen_q = max_seqlens_q
 
     # Compute offsets
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
@@ -389,7 +386,7 @@ def _bwd_dq_inner(
 
 
 @triton.jit
-def bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlen_q // BLOCK_M2), batch, nheads_q)
+def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nheads_q)
     # Input tensors
     Q, K, V,
     DO,
@@ -415,8 +412,8 @@ def bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlen_q // BLOCK_M2), batch, nhea
     HK,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlens_q,
+    max_seqlens_k,
     Dropout_mask,
     dropout_p,
     philox_seed,
@@ -527,8 +524,8 @@ def bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlen_q // BLOCK_M2), batch, nhea
     # figure out varlen start and end
     q_start = 0
     k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     if IS_VARLEN:
         # Compute actual sequence lengths
         q_start = tl.load(cu_seqlens_q + bid)
@@ -924,7 +921,7 @@ def bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlen_q // BLOCK_M2), batch, nhea
 
 
 @triton.jit
-def bwd_kernel_noncausal(
+def _bwd_kernel_noncausal(
     # Input tensors
     Q, K, V,
     DO,
@@ -950,8 +947,8 @@ def bwd_kernel_noncausal(
     HK,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlens_q,
+    max_seqlens_k,
     Dropout_mask,
     dropout_p,
     philox_seed,
@@ -1061,8 +1058,8 @@ def bwd_kernel_noncausal(
     # figure out varlen start and end
     q_start = 0
     k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     if IS_VARLEN:
         # Compute actual sequence lengths
         q_start = tl.load(cu_seqlens_q + bid)
@@ -1289,9 +1286,12 @@ def bwd_kernel_noncausal(
 @functools.lru_cache(maxsize=1024)
 def _get_config():
     if not hasattr(_get_config, "_config_dict"):
-        dev = arch_info.get_device()
+        import os
+        dev = "MI300X"  # only support MI300X and MI350X now
         _get_config._config_dict = {}
-        fpath = f"{AITER_TRITON_CONFIGS_PATH}/{dev}-MHA-DEFAULT.json"
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        TRITON_CONFIGS_PATH = os.path.abspath(f"{this_dir}/../configs")
+        fpath = f"{TRITON_CONFIGS_PATH}/{dev}-MHA-DEFAULT.json"
         with open(fpath, "r") as file:
             config = json.load(file)
         _get_config._config_dict = config

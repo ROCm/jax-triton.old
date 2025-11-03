@@ -15,11 +15,13 @@ BATCH_SIZE: int = 2
 SEQ_LEN: int = 4096
 NUM_HEADS: int = 64
 HEAD_SIZE: int = 128
-MHA_DATATYPE = jnp.float32
-RNG_SEED = 42
-
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
+
+# MHA dtype
+MHA_DTYPE = jnp.float32
+
+RNG_SEED = 42
 
 
 def is_power_of_2(x: int) -> bool:
@@ -128,10 +130,10 @@ class MhaMetaData():
         assert (nheads_q % nheads_k) == 0    
 
 
-# q.shape == k.shape == v.shape = (B, S, H, D)
+# q.shape = k.shape = v.shape = (B, S, H, D)
 def generate_mha_input(
     shape: tuple[int, ...] = MHA_SHAPE, 
-    dtype: jnp.dtype = MHA_DATATYPE
+    dtype: jnp.dtype = MHA_DTYPE
 ):
 
     q_key, k_key, v_key = jax.random.split(jax.random.PRNGKey(RNG_SEED), 3)
@@ -158,10 +160,11 @@ def mha_input_helper(
 
     q_shape = (Z, HQ, N_CTX_Q, D_HEAD)
     k_shape = (Z, HK, N_CTX_K, D_HEAD)
+    v_shape = (Z, HK, N_CTX_K, D_HEAD)
 
     q = jax.random.normal(q_key, q_shape, dtype=dtype)
     k = jax.random.normal(k_key, k_shape, dtype=dtype)
-    v = jax.random.normal(v_key, k_shape, dtype=dtype)
+    v = jax.random.normal(v_key, v_shape, dtype=dtype)
 
     sm_scale = D_HEAD ** -0.5
     input_metadata = MhaMetaData(sm_scale=sm_scale)
@@ -235,4 +238,5 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
 
     (dq, dk, dv), = vjp_fn(dy)
 
-    return y, (dq, dk, dv)
+    return dq, dk, dv
+

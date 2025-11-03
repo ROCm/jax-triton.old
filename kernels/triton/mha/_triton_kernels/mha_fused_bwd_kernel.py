@@ -8,9 +8,36 @@ import torch
 import triton
 import triton.language as tl
 
-from utils._triton import arch_info
-from utils.core import AITER_TRITON_CONFIGS_PATH
-from utils._triton.pid_preprocessing import pid_grid, remap_xcd
+
+# Balance workload when GRID_MN is not divisible by NUM_XCDS
+@triton.jit
+def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
+    ## pid remapping on xcds
+    # Number of pids per XCD in the new arrangement
+    pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS
+    # When GRID_MN cannot divide NUM_XCDS, some xcds will have
+    # pids_per_xcd pids, the other will have pids_per_xcd - 1 pids.
+    # We calculate the number of xcds that have pids_per_xcd pids as
+    # tall_xcds
+    tall_xcds = GRID_MN % NUM_XCDS
+    tall_xcds = NUM_XCDS if tall_xcds == 0 else tall_xcds
+    # Compute current XCD and local pid within the XCD
+    xcd = pid % NUM_XCDS
+    local_pid = pid // NUM_XCDS
+    # Calculate new pid based on the new grouping
+    # Note that we need to consider the following two cases:
+    # 1. the current pid is on a tall xcd
+    # 2. the current pid is on a short xcd
+    if xcd < tall_xcds:
+        pid = xcd * pids_per_xcd + local_pid
+    else:
+        pid = (
+            tall_xcds * pids_per_xcd
+            + (xcd - tall_xcds) * (pids_per_xcd - 1)
+            + local_pid
+        )
+
+    return pid
 
 
 # This function computes delta given output Out and gradient DO
@@ -30,7 +57,7 @@ def _bwd_preprocess(
     stride_delta_b, stride_delta_h, stride_delta_m,
     # Configurations
     cu_seqlens_q,
-    max_seqlen_q,
+    max_seqlens_q,
     # Meta-parameters
     BLOCK_M: tl.constexpr,
     BLOCK_D_MODEL: tl.constexpr,
@@ -43,14 +70,14 @@ def _bwd_preprocess(
 
     # Handle varlen
     q_start = 0
-    seqlen_q = max_seqlen_q
+    seqlen_q = max_seqlens_q
     if IS_VARLEN:
         q_start = tl.load(cu_seqlens_q + bid)
         q_end = tl.load(cu_seqlens_q + bid + 1)
         seqlen_q = q_end - q_start
     else:
         q_start = 0
-        seqlen_q = max_seqlen_q
+        seqlen_q = max_seqlens_q
 
     # Compute offsets
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
@@ -276,8 +303,8 @@ def _bwd_kernel_dkdvdq_causal(
     sm_scale,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlens_q,
+    max_seqlens_k,
     dropout_mask,
     dropout_p,
     philox_seed,
@@ -381,8 +408,8 @@ def _bwd_kernel_dkdvdq_causal(
     # Determine q and k start along with seqlen_q and seqlen_k
     q_start = 0
     k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     if IS_VARLEN:
         q_start = tl.load(cu_seqlens_q + batch_idx)
         q_end = tl.load(cu_seqlens_q + batch_idx + 1)
@@ -606,8 +633,8 @@ def _bwd_kernel_dkdvdq_noncausal(
     sm_scale,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlens_q,
+    max_seqlens_k,
     dropout_mask,
     dropout_p,
     philox_seed,
@@ -702,8 +729,8 @@ def _bwd_kernel_dkdvdq_noncausal(
 
     q_start = 0
     k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
 
     if IS_VARLEN:
         q_start = tl.load(cu_seqlens_q + bid)
@@ -821,9 +848,12 @@ def _bwd_kernel_dkdvdq_noncausal(
 @functools.lru_cache(maxsize=1024)
 def _get_config():
     if not hasattr(_get_config, "_config_dict"):
-        dev = arch_info.get_device()
+        import os
+        dev = "MI300X"  # only support MI300X and MI350X now
         _get_config._config_dict = {}
-        fpath = f"{AITER_TRITON_CONFIGS_PATH}/{dev}-MHA-DEFAULT.json"
+        this_dir = os.path.dirname(os.path.abspath(__file__))
+        TRITON_CONFIGS_PATH = os.path.abspath(f"{this_dir}/../configs")
+        fpath = f"{TRITON_CONFIGS_PATH}/{dev}-MHA-DEFAULT.json"
         with open(fpath, "r") as file:
             config = json.load(file)
         _get_config._config_dict = config
