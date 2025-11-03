@@ -290,15 +290,24 @@ def main(unused_argv):
     q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
     input_meta.need_causal()
 
+    # Transpose to (B, H, S, D)
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
+
     # random upstream gradient
     key = jax.random.PRNGKey(RNG_SEED)
     do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
 
     # Triton results
     dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
+    dq.block_until_ready()
+    dq = jnp.transpose(dq, (0, 2, 1, 3))
 
     # Reference results
     dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
+    dq_ref.block_until_ready()
+    dq_ref = jnp.transpose(dq_ref, (0, 2, 1, 3))
 
     # numeric check
     atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3

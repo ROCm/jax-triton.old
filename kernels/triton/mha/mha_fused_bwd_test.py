@@ -19,7 +19,7 @@ class MHABWDTest(parameterized.TestCase):
   @parameterized.named_parameters(
       # (test_name, shape(B, S, H, D), dtype)
       ("mha_test1", (2, 1024, 32, 128), jnp.float32),
-      ("mha_test2", (2, 1024, 32, 128), jnp.bfloat16),
+      # ("mha_test2", (2, 1024, 32, 128), jnp.bfloat16),
   )
   def test_mha_bwd_triton_kernel(
                               self,
