@@ -23,9 +23,9 @@ from common import (
 )
 
 
-def safe_tensor(x):
+def safe_tensor(x, dtype=jnp.int32):
     if x is None:
-        return jnp.zeros((1,), dtype=jnp.int32)
+        return jnp.zeros((1,), dtype=dtype)
     return x
 
 
@@ -58,6 +58,10 @@ def _flash_attn_fused_backward(
 ):
     if dbias is not None:
         raise ValueError("Bias is not supported yet in the Triton Backend")
+    if q.shape[-1] == k.shape[-1] and k.shape[-1] > v.shape[-1]:
+        raise ValueError(
+            "'Fused' backward doesn't support Positional Encoding (PE). Please use 'one kernel' backward implementation for PE."
+        )
 
     IS_VARLEN = True if cu_seqlens_q is not None else False
 
@@ -78,7 +82,7 @@ def _flash_attn_fused_backward(
             q.shape[1],
             q.shape[2],
         )
-        num_k_heads = k.shape[1]
+        _, num_k_heads = max_seqlen_k, k.shape[1]
         q_strides = (0, q_strides_in[1], q_strides_in[0], q_strides_in[2])
         k_strides = (0, k_strides_in[1], k_strides_in[0], k_strides_in[2])
         v_strides = (0, v_strides_in[1], v_strides_in[0], v_strides_in[2])
@@ -89,7 +93,7 @@ def _flash_attn_fused_backward(
     else:
         # Layout for q,k,v is bshd ie [batch, seq_len, num_head, head_dim]
         batch, seqlen_q, num_q_heads, head_sz = q.shape
-        num_k_heads = k.shape[2]
+        _, num_k_heads = k.shape[1], k.shape[2]
         q_strides = (q_strides_in[0], q_strides_in[2], q_strides_in[1], q_strides_in[3])
         k_strides = (k_strides_in[0], k_strides_in[2], k_strides_in[1], k_strides_in[3])
         v_strides = (v_strides_in[0], v_strides_in[2], v_strides_in[1], v_strides_in[3])
@@ -139,7 +143,7 @@ def _flash_attn_fused_backward(
         delta,
         *o_strides,
         *delta_strides,
-        safe_tensor(cu_seqlens_q),
+        cu_seqlens_q,
         max_seqlens_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
@@ -189,9 +193,9 @@ def _flash_attn_fused_backward(
         grid_dkdvdq = (batch * num_k_heads * num_k_pids,)
 
     out_shape = [
+        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype), 
         jax.ShapeDtypeStruct(shape=dk.shape, dtype=dk.dtype),
-        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),
-        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),        
+        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),       
     ]
 
     dq, dk, dv = jt.triton_call(
@@ -213,8 +217,8 @@ def _flash_attn_fused_backward(
         *dropout_strides,
         # Configurations
         sm_scale,
-        safe_tensor(cu_seqlens_q),
-        safe_tensor(cu_seqlens_k),
+        cu_seqlens_q,
+        cu_seqlens_k,
         max_seqlens_q,
         max_seqlens_k,
         dropout_mask,
@@ -275,6 +279,9 @@ def flash_attn_fused_backward(do, q, k, v, input_meta):
         dbias=None,
         **input_metaparams
     )
+    dq.block_until_ready()
+    dk.block_until_ready()
+    dv.block_until_ready()
 
     # Transpose to (B, H, S, D)
     dq = jnp.transpose(dq, (0, 2, 1, 3))
@@ -291,7 +298,6 @@ SEQ_LEN: int = 1024
 HEAD_SIZE: int = 128
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
-
 # MHA dtype
 MHA_DTYPE = jnp.float32
 
@@ -309,11 +315,9 @@ def main(unused_argv):
 
     # Triton results
     dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
-    dq.block_until_ready()
 
     # Reference results
     dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
-    dq_ref.block_until_ready()
 
     # numeric check
     atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3

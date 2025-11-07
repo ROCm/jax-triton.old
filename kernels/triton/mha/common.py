@@ -239,4 +239,3 @@ def jax_attn_bwd_reference(q, k, v, dy=None):
     (dq, dk, dv), = vjp_fn(dy)
 
     return dq, dk, dv
-

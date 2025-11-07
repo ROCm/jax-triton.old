@@ -23,9 +23,9 @@ from common import (
 )
 
 
-def safe_tensor(x):
+def safe_tensor(x, dtype=jnp.int32):
     if x is None:
-        return jnp.zeros((1,), dtype=jnp.int32)
+        return jnp.zeros((1,), dtype=dtype)
     return x
 
 
@@ -76,15 +76,15 @@ def _flash_attn_onekernel_backward(
 
     # get strides and shape
     if IS_VARLEN:
-        # Layout for q,k,v is thd ie [total tokens, num_head, head_dim]
-        batch, seqlen_q, num_q_heads, head_sz = (
+        # Layout is thd.
+        # q and k are [total_tokens, num_head, head_dim_qk].
+        # v is [total_tokens, num_head, head_dim_v].
+        batch, seqlen_q, num_q_heads = (
             len(cu_seqlens_q) - 1,
             max_seqlens_q,
             q.shape[1],
-            q.shape[2],
         )
-        _, num_k_heads = max_seqlens_k, k.shape[1]
-        num_k_heads = k.shape[1]
+        _, num_k_heads = max_seqlen_k, k.shape[1]
         q_strides = (0, q_strides_in[1], q_strides_in[0], q_strides_in[2])
         k_strides = (0, k_strides_in[1], k_strides_in[0], k_strides_in[2])
         v_strides = (0, v_strides_in[1], v_strides_in[0], v_strides_in[2])
@@ -94,9 +94,11 @@ def _flash_attn_onekernel_backward(
         dv_strides = (0, dv_strides_in[1], dv_strides_in[0], dv_strides_in[2])
         do_strides = (0, do_strides_in[1], do_strides_in[0], do_strides_in[2])
     else:
-        # Layout for q,k,v is bshd ie [batch, seq_len, num_head, head_dim]
-        batch, seqlen_q, num_q_heads, head_sz = q.shape
-        num_k_heads = k.shape[2]
+        # Layout is bshd.
+        # q and k are [batch, seq_len, num_head, head_dim_qk].
+        # v is [batch, seq_len, num_head, head_dim_v]
+        batch, seqlen_q, num_q_heads = q.shape[:-1]
+        _, num_k_heads = k.shape[1], k.shape[2]
         q_strides = (q_strides_in[0], q_strides_in[2], q_strides_in[1], q_strides_in[3])
         k_strides = (k_strides_in[0], k_strides_in[2], k_strides_in[1], k_strides_in[3])
         v_strides = (v_strides_in[0], v_strides_in[2], v_strides_in[1], v_strides_in[3])
@@ -106,10 +108,18 @@ def _flash_attn_onekernel_backward(
         dv_strides = (dv_strides_in[0], dv_strides_in[2], dv_strides_in[1], dv_strides_in[3])
         do_strides = (do_strides_in[0], do_strides_in[2], do_strides_in[1], do_strides_in[3])
 
+    qk_head_dim = q.shape[-1]
+    v_head_dim = v.shape[-1]
+    pe_head_dim = qk_head_dim - v_head_dim
     # BLOCK_D_MODEL, BLOCK_D_MODEL_POW2
     # padding for head_dim. Power of 2 or 16
-    BLOCK_D_MODEL_POW2 = triton.next_power_of_2(head_sz)
-    BLOCK_D_MODEL_POW2 = max(BLOCK_D_MODEL_POW2, 16)
+    BLOCK_D_MODEL_POW2 = max(triton.next_power_of_2(v_head_dim), 16)
+    BLOCK_D_MODEL_PE_POW2 = (
+        0 if pe_head_dim == 0 else max(triton.next_power_of_2(pe_head_dim), 16)
+    )
+    assert (pe_head_dim == 0 and BLOCK_D_MODEL_PE_POW2 == 0) or (
+        v_head_dim == BLOCK_D_MODEL_POW2 and pe_head_dim == BLOCK_D_MODEL_PE_POW2
+    ), "Positional encoding support requires NOPE and PE head sizes to be unpadded powers of 2."
 
     # init delta
     delta = jnp.zeros_like(softmax_lse)
@@ -136,7 +146,7 @@ def _flash_attn_onekernel_backward(
 
     metaparams_pre = dict(
         BLOCK_M=config["preprocess_kernel"]["PRE_BLOCK"],
-        BLOCK_D_MODEL=head_sz,
+        BLOCK_D_MODEL=v_head_dim,
         BLOCK_D_MODEL_POW2=BLOCK_D_MODEL_POW2,
         IS_VARLEN=IS_VARLEN,
     )
@@ -147,7 +157,7 @@ def _flash_attn_onekernel_backward(
         delta,
         *o_strides,
         *delta_strides,
-        safe_tensor(cu_seqlens_q),
+        cu_seqlens_q,
         max_seqlens_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
@@ -169,11 +179,29 @@ def _flash_attn_onekernel_backward(
 
     seqlen = max(max_seqlens_q, max_seqlens_k)
 
-    config_onekernel = config["onekernel"]
+    # "onekernel_pe" is for Positional Encoding (PE) causal case, it's going to be
+    # used if present. Otherwise, fallback to default "onekernel" config.
+    config_onekernel = (
+        config["onekernel_pe"]
+        if (pe_head_dim > 0 and causal and "onekernel_pe" in config)
+        else config["onekernel"]
+    )
+
+    grid = (
+        num_k_heads,
+        triton.cdiv(seqlen, config_onekernel["BLOCK_N1"]),
+        batch,
+    )
+    out_shape = [
+        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),  
+        jax.ShapeDtypeStruct(shape=dk.shape, dtype=dk.dtype),
+        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),      
+    ]
 
     metaparams = dict(
-        HEAD_DIM=head_sz,
+        HEAD_DIM=v_head_dim,
         ACTUAL_HEAD_DIM=BLOCK_D_MODEL_POW2,
+        PE_HEAD_DIM=pe_head_dim,
         ENABLE_DROPOUT=use_dropout,
         IS_VARLEN=IS_VARLEN,
         USE_ALIBI=use_alibi,
@@ -183,22 +211,10 @@ def _flash_attn_onekernel_backward(
         USE_INT64_STRIDES=USE_INT64_STRIDES,
     )
 
-    grid = (
-        num_k_heads,
-        triton.cdiv(seqlen, config_onekernel["BLOCK_N1"]),
-        batch,
-    )
-
     if causal:
         kernel = _bwd_kernel_causal
     else:
         kernel = _bwd_kernel_noncausal
-
-    out_shape = [
-        jax.ShapeDtypeStruct(shape=dk.shape, dtype=dk.dtype),
-        jax.ShapeDtypeStruct(shape=dv.shape, dtype=dv.dtype),
-        jax.ShapeDtypeStruct(shape=dq.shape, dtype=dq.dtype),        
-    ]
 
     dq, dk, dv = jt.triton_call(
         # Input tensors
@@ -224,8 +240,8 @@ def _flash_attn_onekernel_backward(
         sm_scale,
         num_q_heads,
         num_k_heads,
-        safe_tensor(cu_seqlens_q),
-        safe_tensor(cu_seqlens_k),
+        cu_seqlens_q,
+        cu_seqlens_k,
         max_seqlens_q,
         max_seqlens_k,
         dropout_mask,
@@ -287,6 +303,9 @@ def flash_attn_onekernel_backward(do, q, k, v, input_meta):
         dbias=None,
         **input_metaparams
     )
+    dq.block_until_ready()
+    dk.block_until_ready()
+    dv.block_until_ready()
 
     # Transpose to (B, H, S, D)
     dq = jnp.transpose(dq, (0, 2, 1, 3))
@@ -303,7 +322,6 @@ SEQ_LEN: int = 1024
 HEAD_SIZE: int = 128
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
-
 # MHA dtype
 MHA_DTYPE = jnp.float32
 
@@ -321,11 +339,9 @@ def main(unused_argv):
 
     # Triton results
     dq, dk, dv = flash_attn_onekernel_backward(do, q, k, v, input_meta)
-    dq.block_until_ready()
 
     # Reference results
     dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
-    dq_ref.block_until_ready()
 
     # numeric check
     atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
