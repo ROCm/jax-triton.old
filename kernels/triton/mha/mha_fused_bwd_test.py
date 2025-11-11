@@ -1,64 +1,63 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
+
+from typing import Optional, Dict
+import triton
+import triton.language as tl
+
 import jax
 import jax.numpy as jnp
 import jax_triton as jt
-import mha_fused_bwd as backend  # adjust import to wherever you've defined the kernel
 
-from absl.testing import absltest, parameterized
+from mha_fused_bwd_kernel import _flash_attn_fused_backward
+from _triton_kernels.mha_fused_bwd_kernel import (
+    _bwd_preprocess,
+    _bwd_kernel_dkdvdq_causal,
+    _bwd_kernel_dkdvdq_noncausal,
+    _get_config,
+)
 
-# common func
 from common import (
     generate_mha_input,
     jax_attn_fwd_reference,
     jax_attn_bwd_reference,
 )
 
-RNG_SEED = 42
+_USE_INT64_STRIDES = True
 
 
-class MHABWDTest(parameterized.TestCase):
-  @parameterized.named_parameters(
-      # (test_name, shape(B, S, H, D), dtype)
-      ("mha_test1", (2, 1024, 32, 128), jnp.float32),
-      # ("mha_test2", (2, 1024, 32, 128), jnp.bfloat16),
-  )
-  def test_mha_bwd_triton_kernel(
-                              self,
-                              shape,
-                              dtype):
+BATCH_SIZE: int = 1
+SEQ_LEN: int = 128
+NUM_HEADS: int = 16
+HEAD_SIZE: int = 32
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
+assert all(dim > 0 for dim in MHA_SHAPE)
+dtype = jnp.float16
 
+
+def main(unused_argv):
     # generate input data, causal = True
-    q, k, v, input_meta = generate_mha_input(shape, dtype)
+    q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
     input_meta.need_causal()
-
-    # Transpose to (B, H, S, D)
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
 
     # random upstream gradient
     key = jax.random.PRNGKey(RNG_SEED)
     do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
 
     # Triton results
-    dq, dk, dv = backend.flash_attn_fused_backward(do, q, k, v, input_meta)
-    dq.block_until_ready()
-    dq = jnp.transpose(dq, (0, 2, 1, 3))
-    
+    dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
+
     # Reference results
     dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
-    dq_ref.block_until_ready()
-    dq_ref = jnp.transpose(dq_ref, (0, 2, 1, 3))
 
-    # shape & dtype sanity
-    self.assertEqual(dq.shape, shape)
-    self.assertEqual(dq.dtype, dtype)
-
-    # numeric check (allow fp16 tolerance)
-    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
+    # numeric check
+    atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
     max_diff = jnp.max(jnp.abs(dq - dq_ref))
-    self.assertTrue(jnp.allclose(dq, dq_ref, atol=atol),
-                    msg=f"Max diff ({max_diff}) exceeds tolerance (atol={atol})!")
+        
+    assert jnp.allclose(dq, dq_ref, atol=atol), \
+        f"Max diff ({max_diff}) exceeds tolerance (atol={atol})"
 
 
 if __name__ == "__main__":
-  absltest.main()
+    from absl import app
+    app.run(main)

@@ -46,7 +46,6 @@ def _flash_attn_fused_backward(
     sm_scale: float,
     causal: bool,
     dropout_p: float,
-    alibi_slopes: Optional[jnp.ndarray],
     cu_seqlens_q: Optional[jnp.ndarray],
     cu_seqlens_k: Optional[jnp.ndarray],
     max_seqlens_q: int,
@@ -143,7 +142,7 @@ def _flash_attn_fused_backward(
         delta,
         *o_strides,
         *delta_strides,
-        cu_seqlens_q,
+        safe_tensor(cu_seqlens_q),
         max_seqlens_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
@@ -217,8 +216,8 @@ def _flash_attn_fused_backward(
         *dropout_strides,
         # Configurations
         sm_scale,
-        cu_seqlens_q,
-        cu_seqlens_k,
+        safe_tensor(cu_seqlens_q),
+        safe_tensor(cu_seqlens_k),
         max_seqlens_q,
         max_seqlens_k,
         dropout_mask,
@@ -257,7 +256,6 @@ def flash_attn_fused_backward(do, q, k, v, input_meta):
         sm_scale=input_meta.sm_scale,
         causal=input_meta.causal,
         dropout_p=input_meta.dropout_p,
-        alibi_slopes=input_meta.alibi_slopes,
         cu_seqlens_q=input_meta.cu_seqlens_q,
         cu_seqlens_k=input_meta.cu_seqlens_k,
         max_seqlens_q=input_meta.max_seqlens_q,
@@ -291,17 +289,13 @@ def flash_attn_fused_backward(do, q, k, v, input_meta):
     return dq, dk, dv
 
 
-# MHA shape
-BATCH_SIZE: int = 2
-NUM_HEADS: int = 64
-SEQ_LEN: int = 1024
-HEAD_SIZE: int = 128
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
+BATCH_SIZE: int = 1
+SEQ_LEN: int = 128
+NUM_HEADS: int = 16
+HEAD_SIZE: int = 32
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
-# MHA dtype
-MHA_DTYPE = jnp.float32
-
-RNG_SEED = 42
+dtype = jnp.float16
 
 
 def main(unused_argv):

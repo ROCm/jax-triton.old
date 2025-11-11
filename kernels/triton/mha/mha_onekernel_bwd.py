@@ -157,7 +157,7 @@ def _flash_attn_onekernel_backward(
         delta,
         *o_strides,
         *delta_strides,
-        cu_seqlens_q,
+        safe_tensor(cu_seqlens_q),
         max_seqlens_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
@@ -240,15 +240,15 @@ def _flash_attn_onekernel_backward(
         sm_scale,
         num_q_heads,
         num_k_heads,
-        cu_seqlens_q,
-        cu_seqlens_k,
+        safe_tensor(cu_seqlens_q),
+        safe_tensor(cu_seqlens_k),
         max_seqlens_q,
         max_seqlens_k,
         dropout_mask,
         dropout_p,
         philox_seed,
         philox_offset,
-        alibi_slopes,
+        safe_tensor(alibi_slopes),
         kernel=kernel,
         out_shape=out_shape,
         grid=grid,
@@ -315,17 +315,13 @@ def flash_attn_onekernel_backward(do, q, k, v, input_meta):
     return dq, dk, dv
 
 
-# MHA shape
-BATCH_SIZE: int = 2
-NUM_HEADS: int = 64
-SEQ_LEN: int = 1024
-HEAD_SIZE: int = 128
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
+BATCH_SIZE: int = 1
+SEQ_LEN: int = 128
+NUM_HEADS: int = 16
+HEAD_SIZE: int = 32
+MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
-# MHA dtype
-MHA_DTYPE = jnp.float32
-
-RNG_SEED = 42
+dtype = jnp.float16
 
 
 def main(unused_argv):
