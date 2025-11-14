@@ -1,0 +1,199 @@
+Dispatch_ID,Kernel_Name,GPU_ID
+0.0,__amd_rocclr_fillBufferAligned,7.0
+1.0,__amd_rocclr_fillBufferAligned,2.0
+2.0,__amd_rocclr_fillBufferAligned,6.0
+3.0,__amd_rocclr_fillBufferAligned,1.0
+4.0,__amd_rocclr_fillBufferAligned,5.0
+5.0,__amd_rocclr_fillBufferAligned,3.0
+6.0,__amd_rocclr_fillBufferAligned,4.0
+7.0,__amd_rocclr_fillBufferAligned,0.0
+8.0,__amd_rocclr_fillBufferAligned,0.0
+9.0,__amd_rocclr_copyBuffer,0.0
+10.0,__amd_rocclr_copyBuffer,0.0
+11.0,input_concatenate_fusion,0.0
+12.0,input_concatenate_fusion,0.0
+13.0,wrapped_slice_2,0.0
+14.0,wrapped_slice_1,0.0
+15.0,wrapped_slice,0.0
+16.0,loop_multiply_fusion,0.0
+17.0,loop_multiply_fusion,0.0
+18.0,loop_multiply_fusion,0.0
+19.0,__amd_rocclr_copyBuffer,0.0
+20.0,loop_sqrt_fusion,0.0
+21.0,__amd_rocclr_copyBuffer,0.0
+22.0,wrapped_divide,0.0
+23.0,__amd_rocclr_fillBufferAligned,0.0
+24.0,__amd_rocclr_fillBufferAligned,0.0
+25.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+26.0,__amd_rocclr_fillBufferAligned,0.0
+27.0,__amd_rocclr_fillBufferAligned,0.0
+28.0,__amd_rocclr_copyBuffer,0.0
+29.0,__amd_rocclr_copyBuffer,0.0
+30.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+31.0,Cijk_Alik_Bljk_HHS_BH_MT32x32x64_MI16x16x16x1_SN_1LDSB0_APM1_ABV0_ACED0_AF0EM1_AF1EM1_AMAS0_ASE_ASGT_ASLT_ASM_ASAE01_ASCE01_ASEM1_AAC0_BL1_BS1_CLR0_DTLA0_DTLB0_DTVA0_DTVB0_DVO0_ETSP_EPS1_ELFLR0_EMLL0_FSSC10_FL0_GLVWA2_GLVWB2_GRCGA1_GRCGB1_GRPM1_GRVWn1_GSU1_GSUASB_GLS0_ISA942_IU1_K1_KLA_LBSPPA128_LBSPPB128_LPA4_LPB4_LDL1_LRVW4_LWPMn1_LDW0_FMA_MIAV0_MDA2_MO40_MMFSC_MKFGSU256_NTA0_NTB0_NTC0_NTD0_NEPBS0_NLCA1_NLCB1_ONLL1_OPLV0_PK0_PAP0_PGR2_PLR1_PKA0_SIA3_SLW1_SS1_SU0_SUM0_SUS0_SCIUI1_SPO0_SRVW0_SSO0_SVW1_SNLL0_TSGRA0_TSGRB0_TT1_16_TLDS1_UMLDSA1_UMLDSB1_U64SL1_USFGROn1_VAW1_VSn1_VW1_VWB1_VFLRP0_WSGRA1_WSGRB0_WS64_WG32_8_1_WGM1,0.0
+32.0,Cijk_Alik_Bljk_HHS_BH_MT32x32x64_MI16x16x16x1_SN_1LDSB0_APM1_ABV0_ACED0_AF0EM1_AF1EM1_AMAS0_ASE_ASGT_ASLT_ASM_ASAE01_ASCE01_ASEM1_AAC0_BL1_BS1_CLR0_DTLA0_DTLB0_DTVA0_DTVB0_DVO0_ETSP_EPS1_ELFLR0_EMLL0_FSSC10_FL0_GLVWA2_GLVWB2_GRCGA1_GRCGB1_GRPM1_GRVWn1_GSU1_GSUASB_GLS0_ISA942_IU1_K1_KLA_LBSPPA128_LBSPPB128_LPA4_LPB4_LDL1_LRVW4_LWPMn1_LDW0_FMA_MIAV0_MDA2_MO40_MMFSC_MKFGSU256_NTA0_NTB0_NTC0_NTD0_NEPBS0_NLCA1_NLCB1_ONLL1_OPLV0_PK0_PAP0_PGR2_PLR1_PKA0_SIA3_SLW1_SS1_SU0_SUM0_SUS0_SCIUI1_SPO0_SRVW0_SSO0_SVW1_SNLL0_TSGRA0_TSGRB0_TT1_16_TLDS1_UMLDSA1_UMLDSB1_U64SL1_USFGROn1_VAW1_VSn1_VW1_VWB1_VFLRP0_WSGRA1_WSGRB0_WS64_WG32_8_1_WGM1,0.0
+33.0,__amd_rocclr_fillBufferAligned,0.0
+34.0,__amd_rocclr_fillBufferAligned,0.0
+35.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+36.0,__amd_rocclr_fillBufferAligned,0.0
+37.0,__amd_rocclr_fillBufferAligned,0.0
+38.0,__amd_rocclr_copyBuffer,0.0
+39.0,__amd_rocclr_copyBuffer,0.0
+40.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+41.0,gemm_fusion_dot,0.0
+42.0,gemm_fusion_dot,0.0
+43.0,__amd_rocclr_fillBufferAligned,0.0
+44.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+45.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+46.0,__amd_rocclr_copyBuffer,0.0
+47.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+48.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+49.0,__amd_rocclr_copyBuffer,0.0
+50.0,__amd_rocclr_fillBufferAligned,0.0
+51.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+52.0,__amd_rocclr_copyBuffer,0.0
+53.0,__amd_rocclr_fillBufferAligned,0.0
+54.0,__amd_rocclr_fillBufferAligned,0.0
+55.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+56.0,__amd_rocclr_fillBufferAligned,0.0
+57.0,__amd_rocclr_fillBufferAligned,0.0
+58.0,__amd_rocclr_copyBuffer,0.0
+59.0,__amd_rocclr_copyBuffer,0.0
+60.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+61.0,gemm_fusion_dot,0.0
+62.0,gemm_fusion_dot,0.0
+63.0,__amd_rocclr_fillBufferAligned,0.0
+64.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+65.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+66.0,__amd_rocclr_copyBuffer,0.0
+67.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+68.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+69.0,__amd_rocclr_copyBuffer,0.0
+70.0,__amd_rocclr_fillBufferAligned,0.0
+71.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+72.0,__amd_rocclr_copyBuffer,0.0
+73.0,__amd_rocclr_fillBufferAligned,0.0
+74.0,__amd_rocclr_fillBufferAligned,0.0
+75.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+76.0,__amd_rocclr_fillBufferAligned,0.0
+77.0,__amd_rocclr_fillBufferAligned,0.0
+78.0,__amd_rocclr_copyBuffer,0.0
+79.0,__amd_rocclr_copyBuffer,0.0
+80.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+81.0,gemm_fusion_dot,0.0
+82.0,gemm_fusion_dot,0.0
+83.0,__amd_rocclr_fillBufferAligned,0.0
+84.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+85.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+86.0,__amd_rocclr_copyBuffer,0.0
+87.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+88.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+89.0,__amd_rocclr_copyBuffer,0.0
+90.0,__amd_rocclr_fillBufferAligned,0.0
+91.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+92.0,__amd_rocclr_copyBuffer,0.0
+93.0,gemm_fusion_dot,0.0
+94.0,loop_multiply_fusion,0.0
+95.0,__amd_rocclr_copyBuffer,0.0
+96.0,__amd_rocclr_copyBuffer,0.0
+97.0,wrapped_broadcast,0.0
+98.0,loop_select_fusion,0.0
+99.0,__amd_rocclr_copyBuffer,0.0
+100.0,loop_compare_fusion,0.0
+101.0,__amd_rocclr_copyBuffer,0.0
+102.0,loop_select_fusion,0.0
+103.0,__amd_rocclr_copyBuffer,0.0
+104.0,input_reduce_fusion,0.0
+105.0,loop_maximum_fusion,0.0
+106.0,loop_subtract_fusion,0.0
+107.0,wrapped_exponential,0.0
+108.0,input_reduce_fusion,0.0
+109.0,loop_divide_fusion,0.0
+110.0,__amd_rocclr_fillBufferAligned,0.0
+111.0,__amd_rocclr_fillBufferAligned,0.0
+112.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+113.0,__amd_rocclr_fillBufferAligned,0.0
+114.0,__amd_rocclr_fillBufferAligned,0.0
+115.0,__amd_rocclr_copyBuffer,0.0
+116.0,__amd_rocclr_copyBuffer,0.0
+117.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+118.0,Cijk_Ailk_Bljk_HHS_BH_MT16x16x16_MI16x16x16x1_SN_1LDSB0_APM1_ABV0_ACED0_AF0EM1_AF1EM1_AMAS0_ASE_ASGT_ASLT065_117_317_ASM_ASAE01_ASCE01_ASEM1_AAC0_BL1_BS1_CLR1_DTLA0_DTLB0_DTVA0_DTVB0_DVO0_ETSP_EPS1_ELFLR0_EMLL0_FSSC10_FL0_GLVWA4_GLVWB4_GRCGA1_GRCGB1_GRPM1_GRVW4_GSU1_GSUASB_GLS0_ISA942_IU1_K1_KLA_LBSPPA128_LBSPPB128_LPA16_LPB16_LDL1_LRVW4_LWPMn1_LDW0_FMA_MIAV0_MDA2_MO40_MMFSC_MKFGSU256_NTA0_NTB0_NTC3_NTD3_NEPBS0_NLCA1_NLCB1_ONLL1_OPLV0_PK0_PAP0_PGR2_PLR1_PKA0_SIA3_SLW1_SS0_SU0_SUM0_SUS0_SCIUI1_SPO1_SRVW0_SSO2_SVW4_SNLL0_TSGRA0_TSGRB0_TT1_16_TLDS0_UMLDSA0_UMLDSB0_U64SL1_USFGROn1_VAW1_VSn1_VW1_VWB1_VFLRP1_WSGRA0_WSGRB0_WS64_WG16_4_1_WGM1,0.0
+119.0,Cijk_Ailk_Bljk_HHS_BH_MT16x16x16_MI16x16x16x1_SN_1LDSB0_APM1_ABV0_ACED0_AF0EM1_AF1EM1_AMAS0_ASE_ASGT_ASLT065_117_317_ASM_ASAE01_ASCE01_ASEM1_AAC0_BL1_BS1_CLR1_DTLA0_DTLB0_DTVA0_DTVB0_DVO0_ETSP_EPS1_ELFLR0_EMLL0_FSSC10_FL0_GLVWA4_GLVWB4_GRCGA1_GRCGB1_GRPM1_GRVW4_GSU1_GSUASB_GLS0_ISA942_IU1_K1_KLA_LBSPPA128_LBSPPB128_LPA16_LPB16_LDL1_LRVW4_LWPMn1_LDW0_FMA_MIAV0_MDA2_MO40_MMFSC_MKFGSU256_NTA0_NTB0_NTC3_NTD3_NEPBS0_NLCA1_NLCB1_ONLL1_OPLV0_PK0_PAP0_PGR2_PLR1_PKA0_SIA3_SLW1_SS0_SU0_SUM0_SUS0_SCIUI1_SPO1_SRVW0_SSO2_SVW4_SNLL0_TSGRA0_TSGRB0_TT1_16_TLDS0_UMLDSA0_UMLDSB0_U64SL1_USFGROn1_VAW1_VSn1_VW1_VWB1_VFLRP1_WSGRA0_WSGRB0_WS64_WG16_4_1_WGM1,0.0
+120.0,__amd_rocclr_fillBufferAligned,0.0
+121.0,__amd_rocclr_fillBufferAligned,0.0
+122.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+123.0,__amd_rocclr_fillBufferAligned,0.0
+124.0,__amd_rocclr_fillBufferAligned,0.0
+125.0,__amd_rocclr_copyBuffer,0.0
+126.0,__amd_rocclr_copyBuffer,0.0
+127.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+128.0,gemm_fusion_dot,0.0
+129.0,gemm_fusion_dot,0.0
+130.0,__amd_rocclr_fillBufferAligned,0.0
+131.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+132.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+133.0,__amd_rocclr_copyBuffer,0.0
+134.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+135.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+136.0,__amd_rocclr_copyBuffer,0.0
+137.0,__amd_rocclr_fillBufferAligned,0.0
+138.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+139.0,__amd_rocclr_copyBuffer,0.0
+140.0,__amd_rocclr_fillBufferAligned,0.0
+141.0,__amd_rocclr_fillBufferAligned,0.0
+142.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+143.0,__amd_rocclr_fillBufferAligned,0.0
+144.0,__amd_rocclr_fillBufferAligned,0.0
+145.0,__amd_rocclr_copyBuffer,0.0
+146.0,__amd_rocclr_copyBuffer,0.0
+147.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+148.0,gemm_fusion_dot,0.0
+149.0,gemm_fusion_dot,0.0
+150.0,__amd_rocclr_fillBufferAligned,0.0
+151.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+152.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+153.0,__amd_rocclr_copyBuffer,0.0
+154.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+155.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+156.0,__amd_rocclr_copyBuffer,0.0
+157.0,__amd_rocclr_fillBufferAligned,0.0
+158.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+159.0,__amd_rocclr_copyBuffer,0.0
+160.0,__amd_rocclr_fillBufferAligned,0.0
+161.0,__amd_rocclr_fillBufferAligned,0.0
+162.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+163.0,__amd_rocclr_fillBufferAligned,0.0
+164.0,__amd_rocclr_fillBufferAligned,0.0
+165.0,__amd_rocclr_copyBuffer,0.0
+166.0,__amd_rocclr_copyBuffer,0.0
+167.0,"xla::gpu::repeat_buffer_kernel::(anonymous namespace)::RepeatBufferKernel(char*, long, long)",0.0
+168.0,gemm_fusion_dot,0.0
+169.0,gemm_fusion_dot,0.0
+170.0,__amd_rocclr_fillBufferAligned,0.0
+171.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+172.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+173.0,__amd_rocclr_copyBuffer,0.0
+174.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+175.0,"stream_executor::redzone_checker_kernel::(anonymous namespace)::kernel_func(unsigned char*, unsigned char, unsigned long, unsigned int*)",0.0
+176.0,__amd_rocclr_copyBuffer,0.0
+177.0,__amd_rocclr_fillBufferAligned,0.0
+178.0,"void stream_executor::gpu::xla_fp_comparison<Eigen::half>(Eigen::half*, Eigen::half*, float, unsigned long, int*)",0.0
+179.0,__amd_rocclr_copyBuffer,0.0
+181.0,__amd_rocclr_copyBuffer,0.0
+182.0,__amd_rocclr_copyBuffer,0.0
+183.0,input_reduce_fusion,0.0
+184.0,loop_maximum_fusion,0.0
+185.0,wrapped_is_finite,0.0
+186.0,__amd_rocclr_copyBuffer,0.0
+187.0,__amd_rocclr_copyBuffer,0.0
+188.0,wrapped_broadcast,0.0
+189.0,wrapped_select,0.0
+190.0,__amd_rocclr_copyBuffer,0.0
+191.0,loop_subtract_fusion,0.0
+192.0,wrapped_exponential,0.0
+193.0,input_reduce_fusion,0.0
+194.0,wrapped_sign,0.0
+195.0,wrapped_abs,0.0
+196.0,wrapped_log,0.0
+197.0,wrapped_add,0.0
+,,

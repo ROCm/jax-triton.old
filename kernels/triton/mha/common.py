@@ -10,17 +10,6 @@ from jax._src import dtypes
 import jax_triton as jt
 
 
-# MHA Shape
-BATCH_SIZE: int = 2
-NUM_HEADS: int = 64
-SEQ_LEN: int = 4096
-HEAD_SIZE: int = 128
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, NUM_HEADS, SEQ_LEN, HEAD_SIZE)
-assert all(dim > 0 for dim in MHA_SHAPE)
-
-# MHA dtype
-MHA_DTYPE = jnp.float32
-
 RNG_SEED = 42
 
 
@@ -132,8 +121,8 @@ class MhaMetaData():
 
 # q.shape = k.shape = v.shape = (B, H, S, D)
 def generate_mha_input(
-    shape: tuple[int, ...] = MHA_SHAPE, 
-    dtype: jnp.dtype = MHA_DTYPE
+    shape: tuple[int, ...],
+    dtype: jnp.dtype
 ):
 
     q_key, k_key, v_key = jax.random.split(jax.random.PRNGKey(RNG_SEED), 3)

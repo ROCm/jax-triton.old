@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
-from typing import Optional, Dict
 import triton
 import triton.language as tl
 
 import jax
+from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-from mha_fused_bwd_kernel import _flash_attn_fused_backward
+from mha_fwd import _flash_attn_forward
+from mha_fused_bwd import _flash_attn_fused_backward
 from _triton_kernels.mha_fused_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_dkdvdq_causal,

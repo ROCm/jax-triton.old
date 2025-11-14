@@ -6,6 +6,7 @@ import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
 import jax
+from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
@@ -23,6 +24,8 @@ from common import (
 )
 
 
+# `jax_triton.triton_call`` does not accept `None`` inputs; 
+# Replace `None`` input with a dummy tensor instead.
 def safe_tensor(x, dtype=jnp.int32):
     if x is None:
         return jnp.zeros((1,), dtype=dtype)
@@ -244,7 +247,7 @@ def _flash_attn_onekernel_backward(
         safe_tensor(cu_seqlens_k),
         max_seqlens_q,
         max_seqlens_k,
-        dropout_mask,
+        safe_tensor(dropout_mask),
         dropout_p,
         philox_seed,
         philox_offset,

@@ -3,11 +3,42 @@
 
 import functools
 import json
-import torch
 import triton
 import triton.language as tl
 
-from ..utils._triton.pid_preprocessing import remap_xcd
+import jax
+import jax.numpy as jnp
+
+# from ..utils._triton.pid_preprocessing import remap_xcd
+
+@triton.jit
+def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
+    ## pid remapping on xcds
+    # Number of pids per XCD in the new arrangement
+    pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS
+    # When GRID_MN cannot divide NUM_XCDS, some xcds will have
+    # pids_per_xcd pids, the other will have pids_per_xcd - 1 pids.
+    # We calculate the number of xcds that have pids_per_xcd pids as
+    # tall_xcds
+    tall_xcds = GRID_MN % NUM_XCDS
+    tall_xcds = NUM_XCDS if tall_xcds == 0 else tall_xcds
+    # Compute current XCD and local pid within the XCD
+    xcd = pid % NUM_XCDS
+    local_pid = pid // NUM_XCDS
+    # Calculate new pid based on the new grouping
+    # Note that we need to consider the following two cases:
+    # 1. the current pid is on a tall xcd
+    # 2. the current pid is on a short xcd
+    if xcd < tall_xcds:
+        pid = xcd * pids_per_xcd + local_pid
+    else:
+        pid = (
+            tall_xcds * pids_per_xcd
+            + (xcd - tall_xcds) * (pids_per_xcd - 1)
+            + local_pid
+        )
+
+    return pid
 
 
 @triton.jit
@@ -243,14 +274,14 @@ def _attn_fwd_inner(
 
 @triton.jit
 def _attn_fwd(
-    q_ptr: jnp.ndarray,
-    k_ptr: jnp.ndarray,
-    v_ptr: jnp.ndarray,
-    out_ptr: jnp.ndarray,
-    alibi_slopes_ptr: jnp.ndarray,
-    s_dmask_ptr: jnp.ndarray,
-    dropout_mask_ptr: jnp.ndarray,
-    softmax_lse_ptr: jnp.ndarray,
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    out_ptr,
+    alibi_slopes_ptr,
+    s_dmask_ptr,
+    dropout_mask_ptr,
+    softmax_lse_ptr,
     stride_qz_in, stride_qh_in, stride_qm_in, stride_qk_in,
     stride_kz_in, stride_kh_in, stride_kn_in, stride_kk_in,
     stride_vz_in, stride_vh_in, stride_vn_in, stride_vk_in,
@@ -274,8 +305,10 @@ def _attn_fwd(
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_DMODEL_POW2: tl.constexpr,
     BLOCK_DMODEL_PE: tl.constexpr,  # it's zero or a power of 2
-    RETURN_SCORES: tl.constexpr,
+    ENABEL_ALIBI,
+    ENABLE_SDMASK,
     ENABLE_DROPOUT: tl.constexpr,
+    RETURN_SCORES: tl.constexpr,
     VARLEN: tl.constexpr,
     BATCH,
     NUM_XCD: tl.constexpr,
@@ -300,6 +333,9 @@ def _attn_fwd(
     HAS_PE: tl.constexpr = BLOCK_DMODEL_PE > 0
     if HAS_PE:
         offs_pe = BLOCK_DMODEL + tl.arange(0, BLOCK_DMODEL_PE)
+
+    dropout_p = tl.cast(dropout_p, tl.float32)
+    sm_scale = tl.cast(sm_scale, tl.float32)
 
     # NOTE:
     # Workaround for int64 strides, In the absence of strides being int64, parts of the offset
@@ -337,7 +373,8 @@ def _attn_fwd(
         stride_lse_h = tl.cast(stride_lse_h_in, tl.int64)
         stride_lse_m = tl.cast(stride_lse_m_in, tl.int64)
         # NOTE: philox offset is need in dropout pointer calculations
-        philox_offset_base = tl.cast(philox_offset_base_in, tl.int64)
+        if philox_offset_base_in is not None:
+            philox_offset_base = tl.cast(philox_offset_base_in, tl.int64)
     else:
         stride_qz = stride_qz_in
         stride_qm = stride_qm_in
@@ -364,7 +401,8 @@ def _attn_fwd(
         stride_lse_z = stride_lse_z_in
         stride_lse_h = stride_lse_h_in
         stride_lse_m = stride_lse_m_in
-        philox_offset_base = philox_offset_base_in
+        if philox_offset_base_in is not None:
+            philox_offset_base = philox_offset_base_in
 
     tl.assume(stride_qz_in >= 0)
     tl.assume(stride_qh_in >= 0)
@@ -386,7 +424,8 @@ def _attn_fwd(
     tl.assume(stride_lse_h_in >= 0)
     tl.assume(stride_lse_m_in >= 0)
     # NOTE: philox offset is need in dropout pointer calculations
-    tl.assume(philox_offset_base_in >= 0)
+    if philox_offset_base_in is not None:
+        tl.assume(philox_offset_base_in >= 0)
 
     if VARLEN:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
@@ -514,14 +553,14 @@ def _attn_fwd(
     v_ptrs = v_ptr + v_offs
 
     # alibi slopes
-    if alibi_slopes_ptr is not None:
+    if ENABEL_ALIBI:
         alibi_offs = off_z * stride_alibi_z + off_q_head * stride_alibi_h
         alibi_slope = tl.load(alibi_slopes_ptr + alibi_offs)
     else:
         alibi_slope = None
 
     # s_dmask (return_scores)
-    if s_dmask_ptr is not None:
+    if ENABLE_SDMASK:
         s_dmask_offs = (
             off_z * stride_sd_z
             + off_q_head * stride_sd_h
@@ -533,7 +572,7 @@ def _attn_fwd(
         s_dmask_ptrs = None
 
     # dropout
-    if dropout_mask_ptr is not None:
+    if ENABLE_DROPOUT:
         dropout_mask_offs = (
             off_z * stride_sd_z
             + off_q_head * stride_sd_h
@@ -771,7 +810,7 @@ def _attn_fwd(
 @functools.lru_cache(maxsize=1024)
 def _get_config(
     enable_dropout: bool,
-    dtype: torch.dtype,
+    dtype: jnp.dtype,
     has_pe: bool = False,
 ):
     if not hasattr(_get_config, "_config_dict"):
@@ -787,7 +826,7 @@ def _get_config(
 
     if has_pe and "pe" in _get_config._config_dict["default"]["fwd"]:
         return _get_config._config_dict["default"]["fwd"]["pe"]
-    elif enable_dropout or dtype == torch.float32:
+    elif enable_dropout or dtype == jnp.float32:
         return _get_config._config_dict["default"]["fwd"]["dropout_or_fp32"]
     else:
         return _get_config._config_dict["default"]["fwd"]["default"]

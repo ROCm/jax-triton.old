@@ -10,8 +10,8 @@ from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-from aiter.ops.triton.utils.device_info import get_num_xcds
-from aiter.ops.triton._triton_kernels.mha_fwd_kernel import _attn_fwd, _get_config
+# from aiter.ops.triton.utils.device_info import get_num_xcds
+from _triton_kernels.mha_fwd_kernel import _attn_fwd, _get_config
 
 _USE_INT64_STRIDES = True
 
@@ -20,6 +20,14 @@ def mha_set_use_int64_strides(value: bool):
     """Use 64-bit integer strides to prevent integer overflows with very large tensors."""
     global _USE_INT64_STRIDES
     _USE_INT64_STRIDES = value
+
+
+# `jax_triton.triton_call`` does not accept `None`` inputs; 
+# Replace `None`` input with a dummy tensor instead.
+def safe_tensor(x, dtype=jnp.int32):
+    if x is None:
+        return jnp.zeros((1,), dtype=dtype)
+    return x
 
 
 def _flash_attn_forward(
@@ -47,9 +55,10 @@ def _flash_attn_forward(
     if window_size_left != -1 or window_size_right != -1:
         raise ValueError("Sliding Window is not supported yet in the Triton Backend")
 
-    o = jnp.zeros((q.shape[:-1] + v.shape[-1:]), dtype=q.dtype, device=q.device)
-
+    enable_alibi = True if alibi_slopes is not None else False
     is_varlen = True if cu_seqlens_q is not None else False
+
+    o = jnp.zeros((q.shape[:-1] + v.shape[-1:]), dtype=q.dtype, device=q.device)
 
     q_strides = jt.strides_from_shape(q.shape)
     k_strides = jt.strides_from_shape(k.shape)
@@ -124,22 +133,24 @@ def _flash_attn_forward(
     else:
         philox_seed = 0
         philox_offset = 0
+
     if return_softmax or enable_dropout:
+        enable_sdmask = True
         s_dmask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
             device=q.device,
             dtype=jnp.float32,
         )
+        s_dmask_strides = jt.strides_from_shape(s_dmask.shape)
         dropout_mask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
             device=q.device,
             dtype=jnp.float32,
         )
     else:
+        enable_sdmask = False
         s_dmask = None
         dropout_mask = None
-    if s_dmask is not None:
-        s_dmask_strides = jt.strides_from_shape(s_dmask.shape)
 
     if config is None:
         config = _get_config(enable_dropout, q.dtype, has_pe=pe_head_dim > 0)
@@ -173,62 +184,18 @@ def _flash_attn_forward(
         batch * num_q_heads * triton.cdiv(seqlen_q, META["BLOCK_M"]),
     )
 
-    # _attn_fwd[grid](
-    #     q,
-    #     k,
-    #     v,
-    #     o,
-    #     alibi_slopes,
-    #     s_dmask,
-    #     dropout_mask,
-    #     softmax_lse,
-    #     *q_strides,
-    #     *k_strides,
-    #     *v_strides,
-    #     *o_strides,
-    #     alibi_slopes_strides[0] if alibi_slopes is not None else 0,
-    #     alibi_slopes_strides[1] if alibi_slopes is not None else 0,
-    #     s_dmask_strides[0] if s_dmask is not None else 0,
-    #     s_dmask_strides[1] if s_dmask is not None else 0,
-    #     s_dmask_strides[2] if s_dmask is not None else 0,
-    #     s_dmask_strides[3] if s_dmask is not None else 0,
-    #     stride_lse_z if softmax_lse is not None else 0,
-    #     stride_lse_h if softmax_lse is not None else 0,
-    #     stride_lse_m if softmax_lse is not None else 0,
-    #     softmax_scale,
-    #     cu_seqlens_q,
-    #     cu_seqlens_k,
-    #     dropout_p,
-    #     philox_seed,
-    #     philox_offset,
-    #     SEQLEN_Q=max_seqlen_q,
-    #     SEQLEN_K=max_seqlen_k,
-    #     IS_CAUSAL=causal,
-    #     NUM_Q_HEADS=num_q_heads,
-    #     NUM_K_HEADS=num_k_heads,
-    #     BLOCK_DMODEL=v_head_dim,
-    #     BLOCK_DMODEL_POW2=BLOCK_DMODEL_POW2,
-    #     BLOCK_DMODEL_PE=pe_head_dim,
-    #     RETURN_SCORES=return_softmax,
-    #     ENABLE_DROPOUT=enable_dropout,
-    #     VARLEN=is_varlen,
-    #     BATCH=batch,
-    #     NUM_XCD=get_num_xcds(),
-    #     USE_INT64_STRIDES=_USE_INT64_STRIDES,
-    #     **config,
-    # )
-
-    # return o, softmax_lse, s_dmask, philox_seed, philox_offset
-
-    dq, dk, dv = _attn_fwd(
+    o, softmax_lse = jt.triton_call(
+        # core I/O tensors
         q,
         k,
         v,
         o,
-        alibi_slopes,
-        s_dmask,
-        dropout_mask,
-        softmax_lse,
+        # optional tensors
+        safe_tensor(alibi_slopes),
+        safe_tensor(s_dmask),
+        safe_tensor(dropout_mask),
+        safe_tensor(softmax_lse),
+        # strides
         *q_strides,
         *k_strides,
         *v_strides,
@@ -243,21 +210,24 @@ def _flash_attn_forward(
         stride_lse_h if softmax_lse is not None else 0,
         stride_lse_m if softmax_lse is not None else 0,
         softmax_scale,
-        cu_seqlens_q,
-        cu_seqlens_k,
+        safe_tensor(cu_seqlens_q),
+        safe_tensor(cu_seqlens_k),
         dropout_p,
         philox_seed,
         philox_offset,
-        SEQLEN_Q=max_seqlen_q,
-        SEQLEN_K=max_seqlen_k,
+        max_seqlen_q,
+        max_seqlen_k,
         IS_CAUSAL=causal,
         NUM_Q_HEADS=num_q_heads,
         NUM_K_HEADS=num_k_heads,
         BLOCK_DMODEL=v_head_dim,
         BLOCK_DMODEL_POW2=BLOCK_DMODEL_POW2,
         BLOCK_DMODEL_PE=pe_head_dim,
-        RETURN_SCORES=return_softmax,
+        # Flags for optional tensors
+        ENABEL_ALIBI=enable_alibi,
+        ENABLE_SDMASK=enable_sdmask,
         ENABLE_DROPOUT=enable_dropout,
+        RETURN_SCORES=return_softmax,
         VARLEN=is_varlen,
         BATCH=batch,
         NUM_XCD=8,
