@@ -66,14 +66,13 @@ def main(unused_argv):
     )
 
     # Reference attention fwd
-    # Transpose to (B, H, S, D)
     q = jnp.transpose(q, (0, 2, 1, 3))
     k = jnp.transpose(k, (0, 2, 1, 3))
     v = jnp.transpose(v, (0, 2, 1, 3))
 
     out, lse = jax_attn_fwd_reference(q, k, v)
-
-    # Transpose to (B, S, H, D)
+    out = out.block_until_ready()
+    
     out = jnp.transpose(out, (0, 2, 1, 3))
 
     # numeric check

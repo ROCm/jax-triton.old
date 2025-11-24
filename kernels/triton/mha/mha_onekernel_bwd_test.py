@@ -7,7 +7,6 @@ import triton.language as tl  # type: ignore
 import jax
 from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
 from mha_fwd import _flash_attn_forward
 from mha_onekernel_bwd import _flash_attn_onekernel_backward
@@ -35,7 +34,7 @@ def main(unused_argv):
     v = random.normal(v_key, MHA_SHAPE, dtype=dtype)
     bias = None
 
-    do = random.normal(v_key, q.shape, dtype=q.dtype)
+    do = random.normal(do_key, q.shape, dtype=dtype)  # only when D_v == D_q
     dq = jnp.zeros_like(q)
     dk = jnp.empty_like(k)
     dv = jnp.empty_like(v)
@@ -76,7 +75,7 @@ def main(unused_argv):
     )
 
     # Triton attention bwd
-    dq_triton, dk_triton, dv_triton = _flash_attn_onekernel_backward(
+    triton_dq, triton_dk, triton_dv = _flash_attn_onekernel_backward(
         do,
         q, k, v,
         triton_out,
@@ -97,18 +96,30 @@ def main(unused_argv):
     )
 
     # Reference attention bwd
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
+    do = jnp.transpose(do, (0, 2, 1, 3))
+
     dq, dk, dv = jax_attn_bwd_reference(q, k, v, do)
+    dq = dq.block_until_ready()
+    dk = dk.block_until_ready()
+    dv = dv.block_until_ready()
+    
+    dq = jnp.transpose(dq, (0, 2, 1, 3))
+    dk = jnp.transpose(dk, (0, 2, 1, 3))
+    dv = jnp.transpose(dv, (0, 2, 1, 3))
 
     # numeric check
-    atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
-    rtol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
+    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
 
-    assert jnp.allclose(dq, triton_dq.astype(dq.dtype), atol=atol, rtol=rtol), \
-        "Max diff of dq exceeds tolerance"
-    assert jnp.allclose(dk, triton_dk.astype(dk.dtype), atol=atol, rtol=rtol), \
-        "Max diff of dk exceeds tolerance"
-    assert jnp.allclose(dv, triton_dv.astype(dv.dtype), atol=atol, rtol=rtol), \
-        "Max diff of dv exceeds tolerance"
+    assert jnp.allclose(dq, triton_dq.astype(dq.dtype), atol=atol), \
+        f"Max diff of dq exceeds tolerance (atol={atol})"
+    assert jnp.allclose(dk, triton_dk.astype(dk.dtype), atol=atol), \
+        f"Max diff of dk exceeds tolerance (atol={atol})"
+    assert jnp.allclose(dv, triton_dv.astype(dv.dtype), atol=atol), \
+        f"Max diff of dv exceeds tolerance (atol={atol})"
+    print("Test passed!")
 
 
 if __name__ == "__main__":

@@ -17,12 +17,6 @@ from _triton_kernels.mha_fused_bwd_kernel import (
     _get_config,
 )
 
-from common import (
-    generate_mha_input,
-    jax_attn_fwd_reference,
-    jax_attn_bwd_reference,
-)
-
 
 # `jax_triton.triton_call`` does not accept `None`` inputs; 
 # Replace `None`` input with a dummy tensor instead.
@@ -48,11 +42,11 @@ def _flash_attn_fused_backward(
     # Configurations
     sm_scale: float,
     causal: bool,
-    dropout_p: float,
     cu_seqlens_q: Optional[jnp.ndarray],
     cu_seqlens_k: Optional[jnp.ndarray],
     max_seqlens_q: int,
     max_seqlens_k: int,
+    dropout_p: float,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
     USE_INT64_STRIDES: Optional[bool] = False,
@@ -235,95 +229,3 @@ def _flash_attn_fused_backward(
     )
 
     return dq, dk, dv
-
-
-def flash_attn_fused_backward(do, q, k, v, input_meta):
-    # save fwd outputs for bwd
-    o, softmax_lse = jax_attn_fwd_reference(q, k, v)
-
-    # Transpose to (B, S, H, D)
-    do = jnp.transpose(do, (0, 2, 1, 3))
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
-    o = jnp.transpose(o, (0, 2, 1, 3))
-    softmax_lse = jnp.transpose(softmax_lse, (0, 2, 1))
-
-    # initialize output gradients
-    dq = jnp.zeros_like(q)
-    dk = jnp.zeros_like(k)
-    dv = jnp.zeros_like(v)
-
-    # unpack meta-parameters
-    input_metaparams = dict(
-        sm_scale=input_meta.sm_scale,
-        causal=input_meta.causal,
-        dropout_p=input_meta.dropout_p,
-        cu_seqlens_q=input_meta.cu_seqlens_q,
-        cu_seqlens_k=input_meta.cu_seqlens_k,
-        max_seqlens_q=input_meta.max_seqlens_q,
-        max_seqlens_k=input_meta.max_seqlens_k,
-    )
-
-    dq, dk, dv = _flash_attn_fused_backward(
-        # Input tensors
-        do=do,
-        q=q,
-        k=k,
-        v=v,
-        o=o,
-        softmax_lse=softmax_lse,
-        # Output tensors
-        dq=dq,
-        dk=dk,
-        dv=dv,
-        dbias=None,
-        **input_metaparams
-    )
-    dq.block_until_ready()
-    dk.block_until_ready()
-    dv.block_until_ready()
-
-    # Transpose to (B, H, S, D)
-    dq = jnp.transpose(dq, (0, 2, 1, 3))
-    dk = jnp.transpose(dk, (0, 2, 1, 3))
-    dv = jnp.transpose(dv, (0, 2, 1, 3))
-
-    return dq, dk, dv
-
-
-BATCH_SIZE: int = 1
-SEQ_LEN: int = 128
-NUM_HEADS: int = 16
-HEAD_SIZE: int = 32
-MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
-assert all(dim > 0 for dim in MHA_SHAPE)
-dtype = jnp.float16
-
-
-def main(unused_argv):
-    # generate input data, causal = True
-    q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
-    input_meta.need_causal()
-
-    # random upstream gradient
-    key = jax.random.PRNGKey(RNG_SEED)
-    do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
-
-    # Triton results
-    dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
-
-    # Reference results
-    dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
-
-    # numeric check
-    atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
-    max_diff = jnp.max(jnp.abs(dq - dq_ref))
-        
-    assert jnp.allclose(dq, dq_ref, atol=atol), \
-        f"Max diff ({max_diff}) exceeds tolerance (atol={atol})"
-
-
-if __name__ == "__main__":
-    from absl import app
-    app.run(main)

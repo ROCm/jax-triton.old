@@ -7,22 +7,10 @@ import triton.language as tl
 import jax
 from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
 from mha_fwd import _flash_attn_forward
 from mha_fused_bwd import _flash_attn_fused_backward
-from _triton_kernels.mha_fused_bwd_kernel import (
-    _bwd_preprocess,
-    _bwd_kernel_dkdvdq_causal,
-    _bwd_kernel_dkdvdq_noncausal,
-    _get_config,
-)
-
-from common import (
-    generate_mha_input,
-    jax_attn_fwd_reference,
-    jax_attn_bwd_reference,
-)
+from common import jax_attn_bwd_reference
 
 _USE_INT64_STRIDES = True
 
@@ -37,26 +25,95 @@ dtype = jnp.float16
 
 
 def main(unused_argv):
-    # generate input data, causal = True
-    q, k, v, input_meta = generate_mha_input(MHA_SHAPE, MHA_DTYPE)
-    input_meta.need_causal()
+    # create input data
+    key = random.PRNGKey(42)
+    q_key, k_key, v_key, do_key = random.split(key, 4)
 
-    # random upstream gradient
-    key = jax.random.PRNGKey(RNG_SEED)
-    do = jax.random.normal(key, q.shape, dtype=q.dtype)  # only when D_v == D_q
+    q = random.normal(q_key, MHA_SHAPE, dtype=dtype)
+    k = random.normal(k_key, MHA_SHAPE, dtype=dtype)
+    v = random.normal(v_key, MHA_SHAPE, dtype=dtype)
+    bias = None
 
-    # Triton results
-    dq, dk, dv = flash_attn_fused_backward(do, q, k, v, input_meta)
+    do = random.normal(do_key, q.shape, dtype=dtype)  # only when D_v == D_q
+    dq = jnp.zeros_like(q)
+    dk = jnp.empty_like(k)
+    dv = jnp.empty_like(v)
+    dbias = jnp.empty_like(bias) if bias is not None else None
 
-    # Reference results
-    dq_ref, dk_ref, dv_ref = jax_attn_bwd_reference(q, k, v, do)
+    # configurations
+    softmax_scale = q.shape[-1] ** (-0.5)
+    alibi_slopes = None
+    causal = True
+    cu_seqlens_q = None
+    cu_seqlens_k = None
+    max_seqlen_q = SEQ_LEN
+    max_seqlen_k = SEQ_LEN
+    dropout_p = 0.0
+    if dropout_p > 0.0:
+        dropout_mask = sd_mask >= 0
+    else:
+        dropout_mask = None
+    philox_seed = 0
+    philox_offset = 0
+
+    # Triton attention fwd
+    triton_out, triton_lse, _, _, _ = _flash_attn_forward(
+        q, k, v,
+        dropout_p=dropout_p,
+        softmax_scale=softmax_scale,
+        causal=causal,
+        window_size_left=-1,
+        window_size_right=-1,
+        bias=bias,
+        alibi_slopes=alibi_slopes,
+        return_lse=True,
+        return_softmax=False,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+    )
+
+    # Triton attention bwd
+    triton_dq, triton_dk, triton_dv = _flash_attn_fused_backward(
+        do,
+        q, k, v,
+        triton_out,
+        triton_lse,
+        dq, dk, dv,
+        dbias,
+        softmax_scale,
+        causal,
+        None,
+        None,
+        max_seqlen_q=q.shape[1],
+        max_seqlen_k=k.shape[1],
+        dropout_p=dropout_p,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        USE_INT64_STRIDES=_USE_INT64_STRIDES,
+    )
+
+    # Reference attention bwd
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
+    do = jnp.transpose(do, (0, 2, 1, 3))
+    dq, dk, dv = jax_attn_bwd_reference(q, k, v, do)
+    dq = jnp.transpose(dq, (0, 2, 1, 3))
+    dk = jnp.transpose(dk, (0, 2, 1, 3))
+    dv = jnp.transpose(dv, (0, 2, 1, 3))
 
     # numeric check
-    atol = 1e-2 if MHA_DTYPE in (jnp.float16, jnp.bfloat16) else 1e-3
-    max_diff = jnp.max(jnp.abs(dq - dq_ref))
-        
-    assert jnp.allclose(dq, dq_ref, atol=atol), \
-        f"Max diff ({max_diff}) exceeds tolerance (atol={atol})"
+    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
+
+    assert jnp.allclose(dq, triton_dq.astype(dq.dtype), atol=atol), \
+        f"Max diff of dq exceeds tolerance (atol={atol})"
+    assert jnp.allclose(dk, triton_dk.astype(dk.dtype), atol=atol), \
+        f"Max diff of dk exceeds tolerance (atol={atol})"
+    assert jnp.allclose(dv, triton_dv.astype(dv.dtype), atol=atol), \
+        f"Max diff of dv exceeds tolerance (atol={atol})"
+    print("Test passed!")
 
 
 if __name__ == "__main__":
