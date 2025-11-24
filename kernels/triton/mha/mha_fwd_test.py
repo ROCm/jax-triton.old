@@ -4,7 +4,6 @@
 import jax
 from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
 from mha_fwd import _flash_attn_forward
 from common import jax_attn_fwd_reference
@@ -47,33 +46,43 @@ def main(unused_argv):
     philox_seed = 0
     philox_offset = 0
 
-    # # Triton attention fwd
-    # triton_out, triton_lse, _, _, _ = _flash_attn_forward(
-    #     q, k, v,
-    #     dropout_p=dropout_p,
-    #     softmax_scale=softmax_scale,
-    #     causal=causal,
-    #     window_size_left=-1,
-    #     window_size_right=-1,
-    #     bias=bias,
-    #     alibi_slopes=alibi_slopes,
-    #     return_lse=True,
-    #     return_softmax=True,
-    #     max_seqlen_q=max_seqlen_q,
-    #     max_seqlen_k=max_seqlen_k,
-    #     cu_seqlens_q=cu_seqlens_q,
-    #     cu_seqlens_k=cu_seqlens_k,
-    # )
+    # for i in range(100):
+    # Triton attention fwd
+    triton_out, triton_lse, _, _, _ = _flash_attn_forward(
+        q, k, v,
+        dropout_p=dropout_p,
+        softmax_scale=softmax_scale,
+        causal=causal,
+        window_size_left=-1,
+        window_size_right=-1,
+        bias=bias,
+        alibi_slopes=alibi_slopes,
+        return_lse=True,
+        return_softmax=True,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+    )
 
-    # Reference attention bwd
+    # Reference attention fwd
+    # Transpose to (B, H, S, D)
+    q = jnp.transpose(q, (0, 2, 1, 3))
+    k = jnp.transpose(k, (0, 2, 1, 3))
+    v = jnp.transpose(v, (0, 2, 1, 3))
+
     out, lse = jax_attn_fwd_reference(q, k, v)
 
-    # # numeric check
-    # atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
-    # max_diff = jnp.max(jnp.abs(out - triton_out))
+    # Transpose to (B, S, H, D)
+    out = jnp.transpose(out, (0, 2, 1, 3))
 
-    # assert jnp.allclose(out, triton_out.astype(out.dtype), atol=atol), \
-    #     f"Max diff ({max_diff}) of out exceeds tolerance (atol={atol})"
+    # numeric check
+    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
+    max_diff = jnp.max(jnp.abs(out - triton_out))
+
+    assert jnp.allclose(out, triton_out.astype(out.dtype), atol=atol), \
+        f"Max diff ({max_diff}) of out exceeds tolerance (atol={atol})"
+    print("Test passed!")
 
 
 if __name__ == "__main__":

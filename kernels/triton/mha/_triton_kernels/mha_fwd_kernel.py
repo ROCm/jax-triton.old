@@ -9,7 +9,7 @@ import triton.language as tl
 import jax
 import jax.numpy as jnp
 
-# from ..utils._triton.pid_preprocessing import remap_xcd
+# from aiter.ops.triton.utils._triton.pid_preprocessing import remap_xcd
 
 @triton.jit
 def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
@@ -274,14 +274,13 @@ def _attn_fwd_inner(
 
 @triton.jit
 def _attn_fwd(
+    # input pointers
     q_ptr,
     k_ptr,
     v_ptr,
-    out_ptr,
     alibi_slopes_ptr,
     s_dmask_ptr,
     dropout_mask_ptr,
-    softmax_lse_ptr,
     stride_qz_in, stride_qh_in, stride_qm_in, stride_qk_in,
     stride_kz_in, stride_kh_in, stride_kn_in, stride_kk_in,
     stride_vz_in, stride_vh_in, stride_vn_in, stride_vk_in,
@@ -297,6 +296,10 @@ def _attn_fwd(
     philox_offset_base_in,
     SEQLEN_Q,
     SEQLEN_K,
+    # output pointers
+    out_ptr,
+    softmax_lse_ptr,
+    # static parameters
     IS_CAUSAL: tl.constexpr,
     NUM_Q_HEADS: tl.constexpr,
     NUM_K_HEADS: tl.constexpr,
@@ -305,12 +308,12 @@ def _attn_fwd(
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_DMODEL_POW2: tl.constexpr,
     BLOCK_DMODEL_PE: tl.constexpr,  # it's zero or a power of 2
-    ENABEL_ALIBI,
-    ENABLE_SDMASK,
+    ENABLE_ALIBI: tl.constexpr,
+    ENABLE_SDMASK: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_SCORES: tl.constexpr,
     VARLEN: tl.constexpr,
-    BATCH,
+    BATCH: tl.constexpr,
     NUM_XCD: tl.constexpr,
     USE_INT64_STRIDES: tl.constexpr,
 ):
@@ -482,17 +485,16 @@ def _attn_fwd(
             out_mask = (offs_m[:, None] < seqlen_q) & (offs_d[None, :] < BLOCK_DMODEL)
             tl.store(out_ptr + offs_out, acc, mask=out_mask)
 
-            if softmax_lse_ptr is not None:
-                offs_lse = (
-                    off_z * stride_lse_z
-                    + off_q_head * stride_lse_h
-                    + cu_seqlens_q_start * stride_lse_m
-                    + offs_m * stride_lse_m
-                )
-                lse_mask = offs_m < SEQLEN_Q
-                lse = tl.full([BLOCK_M], value=0.0, dtype=tl.float32)
-                tl.store(softmax_lse_ptr + offs_lse, lse, mask=lse_mask)
-                # TODO: Should dropout and return encoded softmax be handled here too?
+            offs_lse = (
+                off_z * stride_lse_z
+                + off_q_head * stride_lse_h
+                + cu_seqlens_q_start * stride_lse_m
+                + offs_m * stride_lse_m
+            )
+            lse_mask = offs_m < SEQLEN_Q
+            lse = tl.full([BLOCK_M], value=0.0, dtype=tl.float32)
+            tl.store(softmax_lse_ptr + offs_lse, lse, mask=lse_mask)
+            # TODO: Should dropout and return encoded softmax be handled here too?
 
             return
 
@@ -553,7 +555,7 @@ def _attn_fwd(
     v_ptrs = v_ptr + v_offs
 
     # alibi slopes
-    if ENABEL_ALIBI:
+    if ENABLE_ALIBI:
         alibi_offs = off_z * stride_alibi_z + off_q_head * stride_alibi_h
         alibi_slope = tl.load(alibi_slopes_ptr + alibi_offs)
     else:
@@ -756,39 +758,39 @@ def _attn_fwd(
 
     # write back LSE(Log Sum Exponents), the log of the normalization constant
     overflow_size = end_m_idx - seqlen_q
-    if softmax_lse_ptr is not None:
-        RCP_LN2: tl.constexpr = 1.4426950408889634
-        LN2: tl.constexpr = 0.6931471824645996
-        # compute log-sum-exp in base 2 units
-        # mi_base2 = m_i * RCP_LN2
-        mi_base2 = m_i * RCP_LN2 * sm_scale
-        softmax_lse = mi_base2 + tl.math.log2(l_i)
-        # convert back to natural units
-        softmax_lse *= LN2
 
-        if IS_CAUSAL:
-            # zero out nans caused by -infs when doing causal
-            lse_causal_mask = (start_m_idx + tl.arange(0, BLOCK_M)) < causal_start_idx
-            softmax_lse = tl.where(lse_causal_mask, 0.0, softmax_lse)
+    RCP_LN2: tl.constexpr = 1.4426950408889634
+    LN2: tl.constexpr = 0.6931471824645996
+    # compute log-sum-exp in base 2 units
+    # mi_base2 = m_i * RCP_LN2
+    mi_base2 = m_i * RCP_LN2 * sm_scale
+    softmax_lse = mi_base2 + tl.math.log2(l_i)
+    # convert back to natural units
+    softmax_lse *= LN2
 
-        # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
-        # This is only true for the last M block. For others, overflow_size will be -ve
-        offs_lse = (
-            off_z * stride_lse_z
-            + off_q_head * stride_lse_h
-            + cu_seqlens_q_start * stride_lse_m
-            + offs_m * stride_lse_m
-        )
-        if overflow_size > 0:
-            boundary = tl.full((BLOCK_M,), BLOCK_M - overflow_size, dtype=tl.int32)
-            lse_mask = tl.arange(0, BLOCK_M) < boundary
-            tl.store(
-                softmax_lse_ptr + offs_lse, softmax_lse, mask=lse_mask
-            )  # the log of the normalization constant
-        else:
-            tl.store(
-                softmax_lse_ptr + offs_lse, softmax_lse
-            )  # the log of the normalization constant
+    if IS_CAUSAL:
+        # zero out nans caused by -infs when doing causal
+        lse_causal_mask = (start_m_idx + tl.arange(0, BLOCK_M)) < causal_start_idx
+        softmax_lse = tl.where(lse_causal_mask, 0.0, softmax_lse)
+
+    # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
+    # This is only true for the last M block. For others, overflow_size will be -ve
+    offs_lse = (
+        off_z * stride_lse_z
+        + off_q_head * stride_lse_h
+        + cu_seqlens_q_start * stride_lse_m
+        + offs_m * stride_lse_m
+    )
+    if overflow_size > 0:
+        boundary = tl.full((BLOCK_M,), BLOCK_M - overflow_size, dtype=tl.int32)
+        lse_mask = tl.arange(0, BLOCK_M) < boundary
+        tl.store(
+            softmax_lse_ptr + offs_lse, softmax_lse, mask=lse_mask
+        )  # the log of the normalization constant
+    else:
+        tl.store(
+            softmax_lse_ptr + offs_lse, softmax_lse
+        )  # the log of the normalization constant
 
     # write back O
     offs_out = (

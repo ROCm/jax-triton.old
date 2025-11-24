@@ -10,7 +10,6 @@ from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-# from aiter.ops.triton.utils.device_info import get_num_xcds
 from _triton_kernels.mha_fwd_kernel import _attn_fwd, _get_config
 
 _USE_INT64_STRIDES = True
@@ -185,16 +184,14 @@ def _flash_attn_forward(
     )
 
     o, softmax_lse = jt.triton_call(
-        # core I/O tensors
+        # input tensors
         q,
         k,
         v,
-        o,
         # optional tensors
         safe_tensor(alibi_slopes),
         safe_tensor(s_dmask),
         safe_tensor(dropout_mask),
-        safe_tensor(softmax_lse),
         # strides
         *q_strides,
         *k_strides,
@@ -217,14 +214,15 @@ def _flash_attn_forward(
         philox_offset,
         max_seqlen_q,
         max_seqlen_k,
+        # static parameters
         IS_CAUSAL=causal,
         NUM_Q_HEADS=num_q_heads,
         NUM_K_HEADS=num_k_heads,
         BLOCK_DMODEL=v_head_dim,
         BLOCK_DMODEL_POW2=BLOCK_DMODEL_POW2,
         BLOCK_DMODEL_PE=pe_head_dim,
-        # Flags for optional tensors
-        ENABEL_ALIBI=enable_alibi,
+        # flags for optional tensors
+        ENABLE_ALIBI=enable_alibi,
         ENABLE_SDMASK=enable_sdmask,
         ENABLE_DROPOUT=enable_dropout,
         RETURN_SCORES=return_softmax,
