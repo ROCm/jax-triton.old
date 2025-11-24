@@ -2,3 +2,8 @@ __pycache__
 build/
 *.egg-info
 *.so
+
+workloads/
+.rocprofv3/
+
+triton_tests_TODO/
