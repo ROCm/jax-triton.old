@@ -99,7 +99,12 @@ def main(unused_argv):
     k = jnp.transpose(k, (0, 2, 1, 3))
     v = jnp.transpose(v, (0, 2, 1, 3))
     do = jnp.transpose(do, (0, 2, 1, 3))
+
     dq, dk, dv = jax_attn_bwd_reference(q, k, v, do)
+    dq = dq.block_until_ready()
+    dk = dk.block_until_ready()
+    dv = dv.block_until_ready()
+
     dq = jnp.transpose(dq, (0, 2, 1, 3))
     dk = jnp.transpose(dk, (0, 2, 1, 3))
     dv = jnp.transpose(dv, (0, 2, 1, 3))

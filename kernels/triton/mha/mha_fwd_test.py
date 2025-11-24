@@ -72,7 +72,7 @@ def main(unused_argv):
 
     out, lse = jax_attn_fwd_reference(q, k, v)
     out = out.block_until_ready()
-    
+
     out = jnp.transpose(out, (0, 2, 1, 3))
 
     # numeric check

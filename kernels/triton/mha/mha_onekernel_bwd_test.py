@@ -105,7 +105,7 @@ def main(unused_argv):
     dq = dq.block_until_ready()
     dk = dk.block_until_ready()
     dv = dv.block_until_ready()
-    
+
     dq = jnp.transpose(dq, (0, 2, 1, 3))
     dk = jnp.transpose(dk, (0, 2, 1, 3))
     dv = jnp.transpose(dv, (0, 2, 1, 3))
