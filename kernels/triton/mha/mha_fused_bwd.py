@@ -44,8 +44,8 @@ def _flash_attn_fused_backward(
     causal: bool,
     cu_seqlens_q: Optional[jnp.ndarray],
     cu_seqlens_k: Optional[jnp.ndarray],
-    max_seqlens_q: int,
-    max_seqlens_k: int,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
     dropout_p: float,
     philox_seed: Optional[int] = 0,
     philox_offset: Optional[int] = 0,
@@ -74,7 +74,7 @@ def _flash_attn_fused_backward(
         # Layout for q,k,v is thd ie [total tokens, num_head, head_dim]
         batch, seqlen_q, num_q_heads, head_sz = (
             len(cu_seqlens_q) - 1,
-            max_seqlens_q,
+            max_seqlen_q,
             q.shape[1],
             q.shape[2],
         )
@@ -120,7 +120,7 @@ def _flash_attn_fused_backward(
     # preprocess
     # compute D(delta) = rowsum(dO*O). Note, multiplication is element-wise.
     pre_grid = (
-        triton.cdiv(max_seqlens_q, config["preprocess_kernel"]["PRE_BLOCK"]),
+        triton.cdiv(max_seqlen_q, config["preprocess_kernel"]["PRE_BLOCK"]),
         batch,
         num_q_heads,
     )
@@ -136,11 +136,10 @@ def _flash_attn_fused_backward(
     delta = jt.triton_call(
         o,
         do,
-        delta,
         *o_strides,
         *delta_strides,
         safe_tensor(cu_seqlens_q),
-        max_seqlens_q,
+        max_seqlen_q,
         kernel=_bwd_preprocess,
         grid=pre_grid,
         out_shape=out_shape,
@@ -151,7 +150,7 @@ def _flash_attn_fused_backward(
     use_dropout = dropout_p > 0.0
     if use_dropout:
         dropout_mask = jnp.zeros(
-            (batch, num_q_heads, max_seqlens_q, max_seqlens_k),
+            (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
             dtype=jnp.float32,
         )
         dropout_strides = jt.strides_from_shape(dropout_mask.shape)
@@ -165,7 +164,7 @@ def _flash_attn_fused_backward(
     else:
         config_dkdvdq = config["dkdvdq_kernel_N128"]
 
-    num_k_pids = (max_seqlens_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq["BLOCK_N"]
+    num_k_pids = (max_seqlen_k + config_dkdvdq["BLOCK_N"] - 1) // config_dkdvdq["BLOCK_N"]
 
     metaparams = dict(
         NUM_Q_HEADS=num_q_heads,
@@ -195,14 +194,11 @@ def _flash_attn_fused_backward(
     ]
 
     dq, dk, dv = jt.triton_call(
-        # Input tensors
+        # inputs
         q, k, v,
         do,
         softmax_lse, 
         delta,
-        # Output tensors
-        dq, dk, dv,
-        # Strides
         *q_strides,
         *k_strides,
         *v_strides,
@@ -211,12 +207,11 @@ def _flash_attn_fused_backward(
         *delta_strides,
         *do_strides,
         *dropout_strides,
-        # Configurations
         sm_scale,
         safe_tensor(cu_seqlens_q),
         safe_tensor(cu_seqlens_k),
-        max_seqlens_q,
-        max_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
         safe_tensor(dropout_mask),
         dropout_p,
         philox_seed,
@@ -224,6 +219,7 @@ def _flash_attn_fused_backward(
         kernel=kernel,
         out_shape=out_shape,
         grid=grid_dkdvdq,
+        # static parameters
         **metaparams,
         **config_dkdvdq
     )

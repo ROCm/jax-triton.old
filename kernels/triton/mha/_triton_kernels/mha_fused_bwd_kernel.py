@@ -6,6 +6,7 @@ import json
 import triton
 import triton.language as tl
 
+# from aiter.ops.triton.utils._triton.pid_preprocessing import remap_xcd
 
 # Balance workload when GRID_MN is not divisible by NUM_XCDS
 @triton.jit
@@ -45,18 +46,16 @@ def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
 # Delta: (batch, nheads_q, max_seqlens_q), same as softmax_lse defined at
 @triton.jit
 def _bwd_preprocess(
-    # Input tensors
+    # input pointers
     o_ptr,
     do_ptr,  # noqa: E741
-    # Output tensors
-    delta_ptr,
-    # Strides
     stride_o_b, stride_o_h, stride_o_m, stride_o_k,
     stride_delta_b, stride_delta_h, stride_delta_m,
-    # Configurations
     cu_seqlens_q,
     max_seqlens_q,
-    # Meta-parameters
+    # output pointers
+    delta_ptr,
+    # static parameters
     BLOCK_M: tl.constexpr,
     BLOCK_D_MODEL: tl.constexpr,
     BLOCK_D_MODEL_POW2: tl.constexpr,
@@ -121,13 +120,11 @@ def _bwd_dkdvdq_inner(
     Q, k, v,        # fwd inputs
     DO,             # upstream gradient
     M, D,           # softmax caches for bwd
-    # Strides
     stride_q_m, stride_q_k,
     stride_dq_m, stride_dq_k,
     stride_do_m, stride_do_k,
     stride_dropout_m, stride_dropout_n,
     stride_deltam,
-    # Configurations
     sm_scale,
     dropout_p,
     philox_seed,
@@ -138,7 +135,7 @@ def _bwd_dkdvdq_inner(
     start_n,
     start_m,
     num_steps,
-    # Meta-parameters
+    # static parameters
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_D_MODEL: tl.constexpr,
@@ -281,14 +278,11 @@ def _bwd_dkdvdq_inner(
 
 @triton.jit
 def _bwd_kernel_dkdvdq_causal(
-    # Input tensors
+    # input pointers
     q_ptr, k_ptr, v_ptr,
     do_ptr,
     m_ptr, 
     delta_ptr,
-    # Output tensors
-    dq_ptr, dk_ptr, dv_ptr,
-    # Strides
     stride_q_b_in, stride_q_h_in, stride_q_m_in, stride_q_k_in,
     stride_k_b_in, stride_k_h_in, stride_k_n_in, stride_k_k_in,
     stride_v_b_in, stride_v_h_in, stride_v_n_in, stride_v_k_in,
@@ -297,7 +291,6 @@ def _bwd_kernel_dkdvdq_causal(
     stride_delta_b_in, stride_delta_h_in, stride_delta_m_in,
     stride_do_b_in, stride_do_h_in, stride_do_m_in, stride_do_k_in,
     stride_dropout_b_in, stride_dropout_h_in, stride_dropout_m_in, stride_dropout_n_in,
-    # Configurations
     sm_scale,
     cu_seqlens_q,
     cu_seqlens_k,
@@ -307,11 +300,13 @@ def _bwd_kernel_dkdvdq_causal(
     dropout_p,
     philox_seed,
     philox_offset_base_in,
-    # Meta-parameters
+    # output pointers
+    dq_ptr, dk_ptr, dv_ptr,
+    # static parameters
     NUM_Q_HEADS: tl.constexpr,
     NUM_K_HEADS: tl.constexpr,
-    BATCH,
-    NUM_K_PIDS,
+    BATCH: tl.constexpr,
+    NUM_K_PIDS: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLK_SLICE_FACTOR: tl.constexpr,
@@ -533,13 +528,11 @@ def _bwd_kernel_dkdvdq_causal(
         do_ptr_adj,
         m_ptr_adj,
         delta_ptr_adj,
-        # Strides
         stride_q_m, stride_q_k,  # strides for q
         stride_dq_m, stride_dq_k,  # strides for dq
         stride_do_m, stride_do_k,  # strides for do
         stride_dropout_m, stride_dropout_n,  # strides for dropout
         stride_delta_m,
-        # Configurations
         sm_scale,
         dropout_p,
         philox_seed,
@@ -549,7 +542,7 @@ def _bwd_kernel_dkdvdq_causal(
         start_n,
         start_m,
         num_steps,  # iteration numbers
-        # Meta-parameters
+        # static parameters
         MASK_BLOCK_M,
         BLOCK_N,  # block dim
         BLOCK_D_MODEL,
@@ -570,13 +563,11 @@ def _bwd_kernel_dkdvdq_causal(
         do_ptr_adj,
         m_ptr_adj,
         delta_ptr_adj,
-        # Strides
         stride_q_m, stride_q_k,  # strides for q
         stride_dq_m, stride_dq_k,  # strides for q
         stride_do_m, stride_do_k,  # strides for o
         stride_dropout_m, stride_dropout_n,  # strides for dropout
         stride_delta_m,
-        # Configurations
         sm_scale,
         dropout_p,
         philox_seed,
@@ -586,7 +577,7 @@ def _bwd_kernel_dkdvdq_causal(
         start_n,
         start_m,
         num_steps,  # iteration numbers
-        # Meta-parameters
+        # static parameters
         BLOCK_M,
         BLOCK_N,  # block dim
         BLOCK_D_MODEL,
@@ -611,14 +602,11 @@ def _bwd_kernel_dkdvdq_causal(
 
 @triton.jit
 def _bwd_kernel_dkdvdq_noncausal(
-    # Input tensors
+    # input pointers
     Q, K, V,
     DO,
     M, 
     Delta,
-    # Output tensors
-    DQ, DK, DV,
-    # Strides
     stride_qb_in, stride_qh_in, stride_qm_in, stride_qk_in,
     stride_kb_in, stride_kh_in, stride_kn_in, stride_kk_in,
     stride_vb_in, stride_vh_in, stride_vn_in, stride_vk_in,
@@ -627,7 +615,6 @@ def _bwd_kernel_dkdvdq_noncausal(
     stride_deltab_in, stride_deltah_in, stride_deltam_in,
     stride_dob_in, stride_doh_in, stride_dom_in, stride_dok_in,
     stride_dropoutb_in, stride_dropouth_in, stride_dropoutm_in, stride_dropoutn_in,
-    # Configurations
     sm_scale,
     cu_seqlens_q,
     cu_seqlens_k,
@@ -637,11 +624,13 @@ def _bwd_kernel_dkdvdq_noncausal(
     dropout_p,
     philox_seed,
     philox_offset,
-    # Meta-parameters
+    # output pointers
+    DQ, DK, DV,
+    # static parameters
     NUM_Q_HEADS: tl.constexpr,
     NUM_K_HEADS: tl.constexpr,
-    BATCH,
-    NUM_K_PIDS,
+    BATCH: tl.constexpr,
+    NUM_K_PIDS: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLK_SLICE_FACTOR: tl.constexpr,
@@ -804,13 +793,11 @@ def _bwd_kernel_dkdvdq_noncausal(
             DO_ptr,
             M_ptr,
             Delta_ptr,
-            # Strides
             stride_qm, stride_qk,
             stride_dqm, stride_dqk,
             stride_dom, stride_dok,
             stride_dropoutm, stride_dropoutn,
             stride_deltam,
-            # Configurations
             sm_scale,
             dropout_p,
             philox_seed,
@@ -821,7 +808,7 @@ def _bwd_kernel_dkdvdq_noncausal(
             start_n,
             start_m,
             num_steps,
-            # Meta-parameters
+            # static parameters
             BLOCK_M,
             BLOCK_N,
             BLOCK_D_MODEL,
