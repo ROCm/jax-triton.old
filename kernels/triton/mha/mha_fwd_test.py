@@ -30,7 +30,6 @@ def main(unused_argv):
     v = random.normal(v_key, MHA_SHAPE, dtype=dtype)
     bias = None
 
-    # configurations
     softmax_scale = q.shape[-1] ** (-0.5)
     alibi_slopes = None
     causal = True
@@ -50,12 +49,12 @@ def main(unused_argv):
     # Triton attention fwd
     triton_out, triton_lse, _, _, _ = _flash_attn_forward(
         q, k, v,
-        dropout_p=dropout_p,
+        bias=bias,
         softmax_scale=softmax_scale,
+        dropout_p=dropout_p,
         causal=causal,
         window_size_left=-1,
         window_size_right=-1,
-        bias=bias,
         alibi_slopes=alibi_slopes,
         return_lse=True,
         return_softmax=True,

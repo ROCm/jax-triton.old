@@ -40,7 +40,6 @@ def main(unused_argv):
     dv = jnp.empty_like(v)
     dbias = jnp.empty_like(bias) if bias is not None else None
 
-    # configurations
     softmax_scale = q.shape[-1] ** (-0.5)
     alibi_slopes = None
     causal = True
