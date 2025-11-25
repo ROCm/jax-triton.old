@@ -151,7 +151,6 @@ def _flash_attn_onekernel_backward(
     delta = jt.triton_call(
         o,
         do,
-        delta,
         *o_strides,
         *delta_strides,
         safe_tensor(cu_seqlens_q),
@@ -214,14 +213,11 @@ def _flash_attn_onekernel_backward(
         kernel = _bwd_kernel_noncausal
 
     dq, dk, dv = jt.triton_call(
-        # Input tensors
+        # inputs
         q, k, v,
         do,
         softmax_lse, 
         delta,
-        # Output tensors
-        dq, dk, dv,
-        # Strides
         *q_strides,
         *k_strides,
         *v_strides,
@@ -233,7 +229,6 @@ def _flash_attn_onekernel_backward(
         *dropout_strides,
         stride_az,
         stride_ah,
-        # Configurations
         sm_scale,
         num_q_heads,
         num_k_heads,
@@ -249,6 +244,7 @@ def _flash_attn_onekernel_backward(
         kernel=kernel,
         out_shape=out_shape,
         grid=grid,
+        # static parameters
         **metaparams,
         **config_onekernel
     )

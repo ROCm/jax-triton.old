@@ -22,18 +22,16 @@ tl_DROPOUT_DUMP: tl.constexpr = triton.language.constexpr(DROPOUT_DUMP)
 # Delta: (batch, nheads_q, max_seqlens_q), same as softmax_lse defined at
 @triton.jit
 def _bwd_preprocess(
-    # Input tensors
+    # input pointers
     o_ptr,
     do_ptr,  # noqa: E741
-    # Output tensors
-    delta_ptr,
-    # Strides
     stride_o_b, stride_o_h, stride_o_m, stride_o_k,
     stride_delta_b, stride_delta_h, stride_delta_m,
-    # Configurations
     cu_seqlens_q,
     max_seqlens_q,
-    # Meta-parameters
+    # output pointers
+    delta_ptr,
+    # static parameters
     BLOCK_M: tl.constexpr,
     BLOCK_D_MODEL: tl.constexpr,
     BLOCK_D_MODEL_POW2: tl.constexpr,
@@ -105,12 +103,10 @@ def _bwd_dkdv_inner(
     DO,
     M,
     D,
-    # Strides
     stride_qm, stride_qk,
     stride_dom, stride_dok,
     stride_dropoutm, stride_dropoutn,
     stride_deltam,
-    # Configurations
     sm_scale,
     dropout_p,
     philox_seed,
@@ -123,7 +119,7 @@ def _bwd_dkdv_inner(
     start_n,
     start_m,
     num_steps,  # iteration numbers
-    # Meta-parameters
+    # static parameters
     BLOCK_M: tl.constexpr,  # 16
     BLOCK_N: tl.constexpr,  # 128
     HEAD_DIM: tl.constexpr,  #
@@ -278,13 +274,11 @@ def _bwd_dq_inner(
     m,
     Delta,
     # Shared by Q/K/V.
-    # Strides
     stride_qm, stride_qk,
     stride_kn, stride_kk,
     stride_vn, stride_vk,
     stride_dropoutm, stride_dropoutn,
     stride_deltam,
-    # Configurations
     sm_scale,
     seqlen_q,
     seqlen_k,  #
@@ -298,7 +292,7 @@ def _bwd_dq_inner(
     start_n,
     end_n,
     num_steps,  # iteration numbers
-    # Meta-parameters
+    # static parameters
     BLOCK_M2: tl.constexpr,  #
     BLOCK_N2: tl.constexpr,  #
     HEAD_DIM: tl.constexpr,
@@ -422,14 +416,11 @@ def _bwd_dq_inner(
 
 @triton.jit
 def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nheads_q)
-    # Input tensors
+    # input pointers
     Q, K, V,
     DO,
     M,
     Delta,
-    # Output tensors
-    DQ, DK, DV,
-    # Strides
     stride_qb_in, stride_qh_in, stride_qm_in, stride_qd_in,
     stride_kb_in, stride_kh_in, stride_kn_in, stride_kd_in,
     stride_vb_in, stride_vh_in, stride_vn_in, stride_vd_in,
@@ -441,7 +432,6 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
     stride_dropoutb_in, stride_dropouth_in, stride_dropoutm_in, stride_dropoutn_in,
     stride_az_in,
     stride_ah_in,
-    # Configurations
     sm_scale,
     HQ,
     HK,
@@ -454,7 +444,9 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
     philox_seed,
     philox_offset_base_in,
     Alibi_slopes,
-    # Meta-parameters
+    # output pointers
+    DQ, DK, DV,
+    # static parameters
     BLOCK_M1: tl.constexpr,
     BLOCK_N1: tl.constexpr,
     BLOCK_M2: tl.constexpr,
@@ -725,12 +717,10 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 DO_ptr,
                 M_ptr,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,  # strides for q
                 stride_dom, stride_dod,  # strides for o
                 stride_dropoutm, stride_dropoutn,  # strides for dropout
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 dropout_p,
                 philox_seed,
@@ -742,7 +732,7 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 start_n,
                 start_m,
                 num_steps,  # iteration numbers
-                # Meta-parameters
+                # static parameters
                 MASK_BLOCK_M1,
                 BLOCK_N1,  # block dim
                 HEAD_DIM,
@@ -782,12 +772,10 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 DO_ptr,
                 M_ptr,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,  # strides for q
                 stride_dom, stride_dod,  # strides for o
                 stride_dropoutm, stride_dropoutn,  # strides for dropout
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 dropout_p,
                 philox_seed,
@@ -799,7 +787,7 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 start_n,
                 start_m,
                 num_steps,  # iteration numbers
-                # Meta-parameters
+                # static parameters
                 BLOCK_M1,
                 BLOCK_N1,  # block dim
                 HEAD_DIM,
@@ -921,13 +909,11 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 do,
                 m,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,
                 stride_kn, stride_kd,
                 stride_vn, stride_vd,
                 stride_dropoutm, stride_dropoutn,
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 seqlen_q,
                 seqlen_k,
@@ -940,7 +926,7 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 start_n,
                 end_n,
                 num_steps,
-                # Meta-parameters
+                # static parameters
                 BLOCK_M2,
                 MASK_BLOCK_N2,
                 HEAD_DIM,
@@ -972,13 +958,11 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 do,
                 m,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,
                 stride_kn, stride_kd,
                 stride_vn, stride_vd,
                 stride_dropoutm, stride_dropoutn,
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 seqlen_q,
                 seqlen_k,
@@ -991,7 +975,7 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
                 start_n,
                 end_n,
                 num_steps,
-                # Meta-parameters
+                # static parameters
                 BLOCK_M2,
                 BLOCK_N2,
                 HEAD_DIM,
@@ -1020,14 +1004,11 @@ def _bwd_kernel_causal(  # grid = (tl.cdiv(max_seqlens_q // BLOCK_M2), batch, nh
 
 @triton.jit
 def _bwd_kernel_noncausal(
-    # Input tensors
+    # input pointers
     Q, K, V,
     DO,
     M,
     Delta,
-    # Output tensors
-    DQ, DK, DV,
-    # Strides
     stride_qb_in, stride_qh_in, stride_qm_in, stride_qd_in,
     stride_kb_in, stride_kh_in, stride_kn_in, stride_kd_in,
     stride_vb_in, stride_vh_in, stride_vn_in, stride_vd_in,
@@ -1039,7 +1020,6 @@ def _bwd_kernel_noncausal(
     stride_dropoutb_in, stride_dropouth_in, stride_dropoutm_in, stride_dropoutn_in,
     stride_az_in,
     stride_ah_in,
-    # Configurations
     sm_scale,
     HQ,
     HK,
@@ -1052,7 +1032,9 @@ def _bwd_kernel_noncausal(
     philox_seed,
     philox_offset_base_in,
     Alibi_slopes,
-    # Meta-parameters
+    # output pointers
+    DQ, DK, DV,
+    # static parameters
     BLOCK_M1: tl.constexpr,  # 32
     BLOCK_N1: tl.constexpr,  # 128
     BLOCK_M2: tl.constexpr,  # 128
@@ -1269,12 +1251,10 @@ def _bwd_kernel_noncausal(
                 DO_ptr,
                 M_ptr,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,  # strides for q
                 stride_dom, stride_dod,  # strides for o
                 stride_dropoutm, stride_dropoutn,  # strides for dropout
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 dropout_p,
                 philox_seed,
@@ -1286,7 +1266,7 @@ def _bwd_kernel_noncausal(
                 start_n,
                 start_m,
                 num_steps,  # iteration numbers
-                # Meta-parameters
+                # static parameters
                 BLOCK_M1,
                 BLOCK_N1,  # block dim
                 HEAD_DIM,
@@ -1388,13 +1368,11 @@ def _bwd_kernel_noncausal(
                 do,
                 m,
                 Delta_ptr,
-                # Strides
                 stride_qm, stride_qd,
                 stride_kn, stride_kd,
                 stride_vn, stride_vd,
                 stride_dropoutm, stride_dropoutn,
                 stride_deltam,
-                # Configurations
                 sm_scale,
                 seqlen_q,
                 seqlen_k,
@@ -1407,7 +1385,7 @@ def _bwd_kernel_noncausal(
                 start_n,
                 end_n,
                 num_steps,
-                # Meta-parameters
+                # static parameters
                 BLOCK_M2,
                 BLOCK_N2,
                 HEAD_DIM,

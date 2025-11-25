@@ -184,11 +184,11 @@ def _flash_attn_forward(
     )
 
     o, softmax_lse = jt.triton_call(
-        # input tensors
+        # inputs
         q,
         k,
         v,
-        # optional tensors
+        # optional
         safe_tensor(alibi_slopes),
         safe_tensor(s_dmask),
         safe_tensor(dropout_mask),
