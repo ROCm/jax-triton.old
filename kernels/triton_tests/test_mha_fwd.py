@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
-import torch
 import pytest
-import numpy as np
-from aiter.ops.triton.mha import flash_attn_func
-from aiter.test_mha_common import attention_ref
+import logging
+import jax
+from jax import random
+import jax.numpy as jnp
+from jax_triton.kernels.triton.mha.mha_fwd import _flash_attn_forward
+from jax_triton.kernels.triton.mha.common import jax_attn_fwd_reference
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 DEBUG_MODE = False
 
 
@@ -23,7 +27,7 @@ DEBUG_MODE = False
     "DROPOUT, RETURN_LSE, RETURN_SOFTMAX, ", [(0.2, True, True), (0.0, False, False)]
 )
 @pytest.mark.parametrize("CAUSAL", [(True), (False)])
-def test_mha(
+def test_mha_forward(
     BATCH: int,
     SEQLEN_Q: int,
     SEQLEN_K: int,
@@ -34,37 +38,54 @@ def test_mha(
     RETURN_LSE: bool,
     RETURN_SOFTMAX: bool,
     CAUSAL: bool,
-    dtype=torch.float16,
+    dtype=jnp.float16,
 ):
-    torch.cuda.empty_cache()
-    q = torch.randn((BATCH, SEQLEN_Q, NUM_Q_HEADS, HEAD_SZ), device="cuda", dtype=dtype)
-    k = torch.randn((BATCH, SEQLEN_K, NUM_K_HEADS, HEAD_SZ), device="cuda", dtype=dtype)
-    v = torch.randn((BATCH, SEQLEN_K, NUM_K_HEADS, HEAD_SZ), device="cuda", dtype=dtype)
+    # create input data
+    key = random.PRNGKey(42)
+    q_key, k_key, v_key = random.split(key, 3)
 
+    q = random.normal(q_key, (BATCH, SEQLEN_Q, NUM_Q_HEADS, HEAD_SZ), dtype=dtype)
+    k = random.normal(k_key, (BATCH, SEQLEN_K, NUM_K_HEADS, HEAD_SZ), dtype=dtype)
+    v = random.normal(v_key, (BATCH, SEQLEN_K, NUM_K_HEADS, HEAD_SZ), dtype=dtype)
+    bias = None
+
+    # other parameters
+    softmax_scale = q.shape[-1] ** (-0.5)
+    alibi_slopes = None
+    cu_seqlens_q = None
+    cu_seqlens_k = None
+    max_seqlen_q = SEQLEN_Q
+    max_seqlen_k = SEQLEN_K
     dropout_mask = None
-    triton_out = flash_attn_func(
-        q,
-        k,
-        v,
+
+    # Triton attention fwd
+    triton_outs = _flash_attn_forward(
+        q, k, v,
+        bias=bias,
+        softmax_scale=softmax_scale,
         dropout_p=DROPOUT,
         causal=CAUSAL,
+        window_size_left=-1,
+        window_size_right=-1,
+        alibi_slopes=alibi_slopes,
         return_lse=RETURN_LSE,
-        return_attn_probs=RETURN_SOFTMAX,
+        return_softmax=RETURN_SOFTMAX,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
     )
 
     if RETURN_LSE:
-        assert len(triton_out) > 1
-        lse = triton_out[1]
+        lse = triton_outs[1]
         if DEBUG_MODE:
             print(f"lse.shape={lse.shape}, lse={lse}")
 
     if DROPOUT > 0.0 and RETURN_SOFTMAX:
         if RETURN_LSE:
-            assert len(triton_out) == 3
-            sd_mask = triton_out[2]
+            sd_mask = triton_outs[2]
         else:
-            assert len(triton_out) == 2
-            sd_mask = triton_out[1]
+            sd_mask = triton_outs[1]
         dropout_mask = sd_mask >= 0
         if DEBUG_MODE:
             print(f"sd_mask.shape={sd_mask.shape}, sd_mask={sd_mask}")
@@ -73,7 +94,7 @@ def test_mha(
             )
 
     if RETURN_SOFTMAX or RETURN_LSE:
-        triton_out = triton_out[0]
+        triton_out = triton_outs[0]
     if DEBUG_MODE:
         print(f"triton_out.shape={triton_out.shape}, triton_out={triton_out}")
 

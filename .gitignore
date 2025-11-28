@@ -7,3 +7,7 @@ workloads/
 .rocprofv3/
 
 triton_tests_TODO/
+
+xla_dumps/
+
+amd_logs/
