@@ -55,15 +55,16 @@ def main(unused_argv):
     philox_seed = 0
     philox_offset = 0
 
+# for i in range(100):
     # Triton attention fwd
     triton_out, triton_lse, _, _, _ = _flash_attn_forward(
         q, k, v,
-        dropout_p=dropout_p,
+        bias=bias,
         softmax_scale=softmax_scale,
+        dropout_p=dropout_p,
         causal=causal,
         window_size_left=-1,
         window_size_right=-1,
-        bias=bias,
         alibi_slopes=alibi_slopes,
         return_lse=True,
         return_softmax=False,
