@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+import functools
 from typing import Optional, Tuple
 import triton
 import triton.language as tl
@@ -29,6 +30,20 @@ def safe_tensor(x, dtype=jnp.int32):
     return x
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=[
+        "softmax_scale",
+        "dropout_p",
+        "causal",
+        "window_size_left",
+        "window_size_right",
+        "return_lse",
+        "return_softmax",
+        "max_seqlen_q",
+        "max_seqlen_k",
+    ],
+)
 def _flash_attn_forward(
     q: jnp.ndarray,
     k: jnp.ndarray,
@@ -57,7 +72,7 @@ def _flash_attn_forward(
     enable_alibi = True if alibi_slopes is not None else False
     is_varlen = True if cu_seqlens_q is not None else False
 
-    o = jnp.zeros((q.shape[:-1] + v.shape[-1:]), dtype=q.dtype, device=q.device)
+    o = jnp.zeros((q.shape[:-1] + v.shape[-1:]), dtype=q.dtype)
 
     q_strides = jt.strides_from_shape(q.shape)
     k_strides = jt.strides_from_shape(k.shape)
@@ -106,7 +121,7 @@ def _flash_attn_forward(
     # softmax_lse [batch, num_q_heads, seqlen_q]
     if is_varlen:
         softmax_lse = jnp.zeros(
-            (q.shape[0], num_q_heads), device=q.device, dtype=jnp.float32
+            (q.shape[0], num_q_heads), dtype=jnp.float32
         )
         lse_strides = jt.strides_from_shape(softmax_lse.shape)
         stride_lse_z, stride_lse_h, stride_lse_m = (
@@ -116,7 +131,7 @@ def _flash_attn_forward(
         )
     else:
         softmax_lse = jnp.zeros(
-            (batch, num_q_heads, max_seqlen_q), device=q.device, dtype=jnp.float32
+            (batch, num_q_heads, max_seqlen_q), dtype=jnp.float32
         )
         lse_strides = jt.strides_from_shape(softmax_lse.shape)
         stride_lse_z, stride_lse_h, stride_lse_m = lse_strides
@@ -137,13 +152,11 @@ def _flash_attn_forward(
         enable_sdmask = True
         s_dmask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
-            device=q.device,
             dtype=jnp.float32,
         )
         s_dmask_strides = jt.strides_from_shape(s_dmask.shape)
         dropout_mask = jnp.zeros(
             (batch, num_q_heads, max_seqlen_q, max_seqlen_k),
-            device=q.device,
             dtype=jnp.float32,
         )
     else:
