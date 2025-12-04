@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+import functools
 from typing import Optional, Dict
 import triton
 import triton.language as tl
@@ -26,6 +27,21 @@ def safe_tensor(x, dtype=jnp.int32):
     return x
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=[
+        "sm_scale",
+        "causal",
+        "cu_seqlens_q",
+        "cu_seqlens_k",
+        "max_seqlen_q",
+        "max_seqlen_k",
+        "dropout_p",
+        "philox_seed",
+        "philox_offset",
+        "USE_INT64_STRIDES",
+    ],
+)
 def _flash_attn_fused_backward(
     # Input tensors
     do: jnp.ndarray,

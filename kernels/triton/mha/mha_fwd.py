@@ -38,10 +38,13 @@ def safe_tensor(x, dtype=jnp.int32):
         "causal",
         "window_size_left",
         "window_size_right",
+        "alibi_slopes",
         "return_lse",
         "return_softmax",
         "max_seqlen_q",
         "max_seqlen_k",
+        "cu_seqlens_q",
+        "cu_seqlens_k"
     ],
 )
 def _flash_attn_forward(
