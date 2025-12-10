@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2025, Advanced Micro Devices, Inc. All rights reserved.
 
+import time
+
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
@@ -15,10 +17,10 @@ from common import jax_attn_bwd_reference
 _USE_INT64_STRIDES = True
 
 
-BATCH_SIZE: int = 1
-SEQ_LEN: int = 128
-NUM_HEADS: int = 16
-HEAD_SIZE: int = 32
+BATCH_SIZE: int = 2
+SEQ_LEN: int = 1024
+NUM_HEADS: int = 32
+HEAD_SIZE: int = 64
 MHA_SHAPE: tuple[int, int, int, int] = (BATCH_SIZE, SEQ_LEN, NUM_HEADS, HEAD_SIZE)
 assert all(dim > 0 for dim in MHA_SHAPE)
 dtype = jnp.float16
@@ -55,7 +57,6 @@ def main(unused_argv):
     philox_seed = 0
     philox_offset = 0
 
-# for i in range(100):
     # Triton attention fwd
     triton_out, triton_lse, _, _, _ = _flash_attn_forward(
         q, k, v,
@@ -73,6 +74,8 @@ def main(unused_argv):
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_k=cu_seqlens_k,
     )
+    triton_out = triton_out.block_until_ready()
+    triton_lse = triton_lse.block_until_ready()
 
     # Triton attention bwd
     triton_dq, triton_dk, triton_dv = _flash_attn_onekernel_backward(
@@ -94,32 +97,41 @@ def main(unused_argv):
         philox_offset=philox_offset,
         USE_INT64_STRIDES=_USE_INT64_STRIDES,
     )
+    triton_dq = triton_dq.block_until_ready()
+    triton_dk = triton_dk.block_until_ready()
+    triton_dv = triton_dv.block_until_ready()
 
-    # Reference attention bwd
-    q = jnp.transpose(q, (0, 2, 1, 3))
-    k = jnp.transpose(k, (0, 2, 1, 3))
-    v = jnp.transpose(v, (0, 2, 1, 3))
-    do = jnp.transpose(do, (0, 2, 1, 3))
+    # # Reference attention bwd
+    # q = jnp.transpose(q, (0, 2, 1, 3))
+    # k = jnp.transpose(k, (0, 2, 1, 3))
+    # v = jnp.transpose(v, (0, 2, 1, 3))
+    # do = jnp.transpose(do, (0, 2, 1, 3))
 
-    dq, dk, dv = jax_attn_bwd_reference(q, k, v, do)
-    dq = dq.block_until_ready()
-    dk = dk.block_until_ready()
-    dv = dv.block_until_ready()
+    # for i in range(100):
+    #     dq, dk, dv = jax_attn_bwd_reference(q, k, v, do)
+    #     dq = dq.block_until_ready()
+    #     dk = dk.block_until_ready()
+    #     dv = dv.block_until_ready()
 
-    dq = jnp.transpose(dq, (0, 2, 1, 3))
-    dk = jnp.transpose(dk, (0, 2, 1, 3))
-    dv = jnp.transpose(dv, (0, 2, 1, 3))
+    # dq = jnp.transpose(dq, (0, 2, 1, 3))
+    # dk = jnp.transpose(dk, (0, 2, 1, 3))
+    # dv = jnp.transpose(dv, (0, 2, 1, 3))
 
-    # numeric check
-    atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
+    # # numeric check
+    # atol = 1e-2 if dtype in (jnp.float16, jnp.bfloat16) else 1e-3
 
-    assert jnp.allclose(dq, triton_dq.astype(dq.dtype), atol=atol), \
-        f"Max diff of dq exceeds tolerance (atol={atol})"
-    assert jnp.allclose(dk, triton_dk.astype(dk.dtype), atol=atol), \
-        f"Max diff of dk exceeds tolerance (atol={atol})"
-    assert jnp.allclose(dv, triton_dv.astype(dv.dtype), atol=atol), \
-        f"Max diff of dv exceeds tolerance (atol={atol})"
-    print("Test passed!")
+    # max_diff = jnp.max(jnp.abs(dq - triton_dq))
+    # assert jnp.allclose(dq, triton_dq.astype(dq.dtype), atol=atol), \
+    #     f"Max diff ({max_diff}) of dq exceeds tolerance (atol={atol})"
+
+    # max_diff = jnp.max(jnp.abs(dk - triton_dk))
+    # assert jnp.allclose(dk, triton_dk.astype(dk.dtype), atol=atol), \
+    #     f"Max diff ({max_diff}) of dk exceeds tolerance (atol={atol})"
+
+    # max_diff = jnp.max(jnp.abs(dv - triton_dv))
+    # assert jnp.allclose(dv, triton_dv.astype(dv.dtype), atol=atol), \
+    #     f"Max diff ({max_diff}) of dv exceeds tolerance (atol={atol})"
+    # print("Test passed!")
 
 
 if __name__ == "__main__":

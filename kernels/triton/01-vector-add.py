@@ -27,6 +27,7 @@ def add_kernel(x_ptr,
     tl.store(output_ptr + offsets, output, mask=mask)
 
 
+@jax.jit
 def add(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     n_elements = x.size
     BLOCK_SIZE = 16
@@ -47,11 +48,16 @@ def add(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 def main(unused_argv):
     x = jnp.arange(512)
     y = jnp.arange(512, 1024)
-    z = jax.jit(add)(x, y)
 
+    z = add(x, y)
     expected = x + y
     np.testing.assert_allclose(z, expected)
     print("Test passed!")
+
+    jax_ms = triton.testing.do_bench(lambda: x + y)
+    print(f"Jax add: {jax_ms} ms")
+    triton_ms = triton.testing.do_bench(lambda: add(x, y))
+    print(f"Triton add: {triton_ms} ms")
 
 
 if __name__ == "__main__":
