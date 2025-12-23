@@ -11,7 +11,8 @@ from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-from _triton_kernels.mha_fwd_kernel import _attn_fwd, _get_config
+from jax_triton.ops.utils.device_info import get_num_xcds
+from jax_triton.ops._kernels.mha_fwd_kernel import _attn_fwd, _get_config
 
 _USE_INT64_STRIDES = True
 
@@ -38,13 +39,11 @@ def safe_tensor(x, dtype=jnp.int32):
         "causal",
         "window_size_left",
         "window_size_right",
-        "alibi_slopes",
         "return_lse",
         "return_softmax",
         "max_seqlen_q",
         "max_seqlen_k",
-        "cu_seqlens_q",
-        "cu_seqlens_k"
+        # "config",  # TODO: `dict`` cannot be used as static arg.
     ],
 )
 def _flash_attn_forward(
@@ -244,7 +243,7 @@ def _flash_attn_forward(
         RETURN_SCORES=return_softmax,
         VARLEN=is_varlen,
         BATCH=batch,
-        NUM_XCD=8,
+        NUM_XCD=get_num_xcds(),
         USE_INT64_STRIDES=_USE_INT64_STRIDES,
         kernel=_attn_fwd,
         out_shape=out_shape,

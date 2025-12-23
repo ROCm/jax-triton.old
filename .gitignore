@@ -2,12 +2,4 @@ __pycache__
 build/
 *.egg-info
 *.so
-
-# rocprofv3
-.rocprofv3/
-workloads/
-analysis/
-
-# TODO
-triton_tests_TODO/
-mha_jax=0.5.0/
+TODO

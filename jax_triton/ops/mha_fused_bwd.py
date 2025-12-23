@@ -11,7 +11,8 @@ from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-from _triton_kernels.mha_fused_bwd_kernel import (
+from jax_triton.ops.utils.device_info import get_num_xcds
+from jax_triton.ops._kernels.mha_fused_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_dkdvdq_causal,
     _bwd_kernel_dkdvdq_noncausal,
@@ -32,14 +33,13 @@ def safe_tensor(x, dtype=jnp.int32):
     static_argnames=[
         "sm_scale",
         "causal",
-        "cu_seqlens_q",
-        "cu_seqlens_k",
         "max_seqlen_q",
         "max_seqlen_k",
         "dropout_p",
         "philox_seed",
         "philox_offset",
         "USE_INT64_STRIDES",
+        # "config",  # TODO: `dict`` cannot be used as static arg.
     ],
 )
 def _flash_attn_fused_backward(
@@ -192,7 +192,7 @@ def _flash_attn_fused_backward(
         ENABLE_DROPOUT=use_dropout,
         IS_VARLEN=IS_VARLEN,
         USE_INT64_STRIDES=USE_INT64_STRIDES,
-        NUM_XCD=8,
+        NUM_XCD=get_num_xcds(),
     )
 
     if causal:

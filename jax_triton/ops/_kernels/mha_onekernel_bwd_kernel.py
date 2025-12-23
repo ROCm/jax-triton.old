@@ -6,6 +6,7 @@ import json
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
+from ..utils._triton import arch_info
 
 # NOTE: triton fails to import tl.constexprs so create them here for the file
 DROPOUT_USE_PYTORCH = False
@@ -1414,9 +1415,9 @@ def _bwd_kernel_noncausal(
 @functools.lru_cache(maxsize=1024)
 def _get_config():
     if not hasattr(_get_config, "_config_dict"):
-        import os
-        dev = "MI300X"  # only support MI300X and MI350X now
+        dev = arch_info.get_device()
         _get_config._config_dict = {}
+        import os
         this_dir = os.path.dirname(os.path.abspath(__file__))
         TRITON_CONFIGS_PATH = os.path.abspath(f"{this_dir}/../configs")
         fpath = f"{TRITON_CONFIGS_PATH}/{dev}-MHA-DEFAULT.json"

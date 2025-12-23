@@ -39,7 +39,6 @@ def get_strides_from_layout(q, k, v, metadata):
     return q_strides, k_strides, v_strides#, o_strides
 
 
-@jax.jit
 def jax_attn_fwd_reference(q, k, v):
     """
     Compute attention output and softmax_lse
@@ -71,7 +70,6 @@ def jax_attn_fwd_reference(q, k, v):
     return out, softmax_lse
 
 
-@jax.jit
 def jax_attn_bwd_reference(q, k, v, dy=None):
     """
     Compute attention output and its gradients w.r.t q, k, v

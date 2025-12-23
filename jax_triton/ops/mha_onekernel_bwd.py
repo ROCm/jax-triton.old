@@ -11,7 +11,7 @@ from jax import random
 import jax.numpy as jnp
 import jax_triton as jt
 
-from _triton_kernels.mha_onekernel_bwd_kernel import (
+from jax_triton.ops._kernels.mha_onekernel_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_causal,
     _bwd_kernel_noncausal,
@@ -31,16 +31,14 @@ def safe_tensor(x, dtype=jnp.int32):
     jax.jit,
     static_argnames=[
         "sm_scale",
-        "alibi_slopes",
         "causal",
-        "cu_seqlens_q",
-        "cu_seqlens_k",
         "max_seqlen_q",
         "max_seqlen_k",
         "dropout_p",
         "philox_seed",
         "philox_offset",
         "USE_INT64_STRIDES",
+        # "config",  # TODO: `dict`` cannot be used as static arg.
     ],
 )
 def _flash_attn_onekernel_backward(
