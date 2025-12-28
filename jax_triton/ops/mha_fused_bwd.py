@@ -28,20 +28,6 @@ def safe_tensor(x, dtype=jnp.int32):
     return x
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=[
-        "sm_scale",
-        "causal",
-        "max_seqlen_q",
-        "max_seqlen_k",
-        "dropout_p",
-        "philox_seed",
-        "philox_offset",
-        "USE_INT64_STRIDES",
-        # "config",  # TODO: `dict`` cannot be used as static arg.
-    ],
-)
 def _flash_attn_fused_backward(
     # Input tensors
     do: jnp.ndarray,
@@ -57,6 +43,7 @@ def _flash_attn_fused_backward(
     dbias: jnp.ndarray,
     # Configurations
     sm_scale: float,
+    alibi_slopes: Optional[jnp.ndarray],
     causal: bool,
     cu_seqlens_q: Optional[jnp.ndarray],
     cu_seqlens_k: Optional[jnp.ndarray],

@@ -31,21 +31,6 @@ def safe_tensor(x, dtype=jnp.int32):
     return x
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=[
-        "softmax_scale",
-        "dropout_p",
-        "causal",
-        "window_size_left",
-        "window_size_right",
-        "return_lse",
-        "return_softmax",
-        "max_seqlen_q",
-        "max_seqlen_k",
-        # "config",  # TODO: `dict`` cannot be used as static arg.
-    ],
-)
 def _flash_attn_forward(
     q: jnp.ndarray,
     k: jnp.ndarray,

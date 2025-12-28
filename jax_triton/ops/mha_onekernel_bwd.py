@@ -27,20 +27,6 @@ def safe_tensor(x, dtype=jnp.int32):
     return x
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=[
-        "sm_scale",
-        "causal",
-        "max_seqlen_q",
-        "max_seqlen_k",
-        "dropout_p",
-        "philox_seed",
-        "philox_offset",
-        "USE_INT64_STRIDES",
-        # "config",  # TODO: `dict`` cannot be used as static arg.
-    ],
-)
 def _flash_attn_onekernel_backward(
     # Input tensors
     do: jnp.ndarray,
