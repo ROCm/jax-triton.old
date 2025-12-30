@@ -2,8 +2,8 @@
 import functools
 import argparse
 import typing
-import math
-from einops import rearrange, repeat
+# import math
+# from einops import rearrange, repeat
 
 # JAX
 import jax
@@ -30,7 +30,7 @@ def jax_attn_reference(q, k, v, causal=False):
     kv_seq_len = k.shape[1]
     sm_scale = 1.0 / jnp.sqrt(q.shape[-1])
 
-    logits = jnp.einsum('bqhd,bkhd->bhqk', q, k, preferred_element_type=jnp.float32)
+    logits = jnp.einsum('bqhd,bkhd->bhqk', q, k)
     mask = None
     if causal:
         causal_mask = jnp.tril(jnp.ones((1, 1, q_seq_len, kv_seq_len), dtype=bool))
@@ -39,7 +39,7 @@ def jax_attn_reference(q, k, v, causal=False):
     logits = logits if mask is None else jnp.where(mask, logits, float("-inf"))
 
     weights = jax.nn.softmax(logits * sm_scale)
-    out = jnp.einsum('bhqk,bkhd->bqhd', weights, v, preferred_element_type=jnp.float32)
+    out = jnp.einsum('bhqk,bkhd->bqhd', weights, v)
     return out
 
 
