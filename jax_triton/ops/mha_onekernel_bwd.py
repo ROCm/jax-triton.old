@@ -3,14 +3,12 @@
 
 import functools
 from typing import Optional, Dict
-import triton  # type: ignore
-import triton.language as tl  # type: ignore
+import triton
 
 import jax
-from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
+import jax_triton as jt
 from jax_triton.ops._kernels.mha_onekernel_bwd_kernel import (
     _bwd_preprocess,
     _bwd_kernel_causal,

@@ -4,13 +4,11 @@
 import functools
 from typing import Optional, Dict
 import triton
-import triton.language as tl
 
 import jax
-from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
+import jax_triton as jt
 from jax_triton.ops.utils.device_info import get_num_xcds
 from jax_triton.ops._kernels.mha_fused_bwd_kernel import (
     _bwd_preprocess,

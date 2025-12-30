@@ -4,13 +4,11 @@
 import functools
 from typing import Optional, Tuple
 import triton
-import triton.language as tl
 
 import jax
-from jax import random
 import jax.numpy as jnp
-import jax_triton as jt
 
+import jax_triton as jt
 from jax_triton.ops.utils.device_info import get_num_xcds
 from jax_triton.ops._kernels.mha_fwd_kernel import _attn_fwd, _get_config
 
@@ -126,11 +124,11 @@ def _flash_attn_forward(
     # exp_scores [batch, num_q_heads, seqlen_q, seqlen_k]
     enable_dropout = dropout_p > 0.0
     if enable_dropout:
-        key = random.PRNGKey(42)
-        seed_key, offset_key = random.split(key, 2)
+        key = jax.random.PRNGKey(42)
+        seed_key, offset_key = jax.random.split(key, 2)
         # Pass in an int, not Tensor
-        philox_seed = random.randint(seed_key, (), 0, 0xFFFFFF).item()
-        philox_offset = random.randint(offset_key, (), 0, 0xFFFFFF).item()
+        philox_seed = jax.random.randint(seed_key, (), 0, 0xFFFFFF).item()
+        philox_offset = jax.random.randint(offset_key, (), 0, 0xFFFFFF).item()
     else:
         philox_seed = 0
         philox_offset = 0
