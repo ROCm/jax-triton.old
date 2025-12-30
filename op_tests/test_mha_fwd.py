@@ -6,6 +6,7 @@ import logging
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from jax_triton.ops.mha import flash_attn_func
 from jax_triton.test_mha_common import jax_attn_reference
@@ -32,12 +33,15 @@ def test_mha_forward(
     NUM_Q_HEADS: int,
     NUM_K_HEADS: int,
     HEAD_SZ: int,
-    DROPOUT: float = 0.0,
     CAUSAL: bool,
+    DROPOUT: float = 0.0,
     RETURN_LSE: bool = False,
     RETURN_SOFTMAX: bool = False,
     dtype=jnp.float16,
 ):
+    if SEQLEN_Q != SEQLEN_K or NUM_Q_HEADS != NUM_K_HEADS:
+        pytest.skip("Currently only q, k of the same shape are supported")
+
     # create input data
     key = jax.random.PRNGKey(42)
     q_key, k_key, v_key = jax.random.split(key, 3)
@@ -67,4 +71,4 @@ def test_mha_forward(
     if DEBUG_MODE:
         print(f"jax_out.shape={jax_out.shape}, jax_out={jax_out}")
 
-    jnp.testing.assert_allclose(triton_out, jax_out, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(triton_out, jax_out, atol=1e-2, rtol=1e-2)

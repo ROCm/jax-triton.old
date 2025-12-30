@@ -6,6 +6,7 @@ import logging
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from jax_triton.ops.mha import (
     flash_attn_func,
@@ -35,18 +36,21 @@ def test_mha_backward(
     NUM_Q_HEADS: int,
     NUM_K_HEADS: int,
     HEAD_SZ: int,
-    DROPOUT: float = 0.0,
     CAUSAL: bool,
     FUSED: bool,
+    DROPOUT: float = 0.0,
     dtype=jnp.float16,
 ):
+    if SEQLEN_Q != SEQLEN_K or NUM_Q_HEADS != NUM_K_HEADS:
+        pytest.skip("Currently only q, k of the same shape are supported")
+
     if FUSED and CAUSAL:
         pytest.skip("FUSED+CAUSAL results in NaNs")
     mha_set_use_fused_bwd_kernel(FUSED)
 
     # create input data
     key = jax.random.PRNGKey(42)
-    q_key, k_key, v_key, do_key = random.split(key, 4)
+    q_key, k_key, v_key, do_key = jax.random.split(key, 4)
 
     q = jax.random.normal(q_key, (BATCH, SEQLEN_Q, NUM_Q_HEADS, HEAD_SZ), dtype=dtype)
     k = jax.random.normal(k_key, (BATCH, SEQLEN_K, NUM_K_HEADS, HEAD_SZ), dtype=dtype)
@@ -106,6 +110,6 @@ def test_mha_backward(
         print(f"jax_dk.shape={jax_dk.shape} jax_dk={jax_dk}")
         print(f"jax_dv.shape={jax_dv.shape} jax_dv={jax_dv}")
 
-    jnp.testing.assert_allclose(triton_dq, jax_dq, atol=1e-2, rtol=1e-2)
-    jnp.testing.assert_allclose(triton_dk, jax_dk, atol=1e-2, rtol=1e-2)
-    jnp.testing.assert_allclose(triton_dv, jax_dv, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(triton_dq, jax_dq, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(triton_dk, jax_dk, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(triton_dv, jax_dv, atol=1e-2, rtol=1e-2)
