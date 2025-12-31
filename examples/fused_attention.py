@@ -104,11 +104,11 @@ def fused_attention_kernel(
   out_ptrs = Out + off_o
   tl.store(out_ptrs, acc)
 
-@functools.partial(jax.jit, static_argnames=["sm_scale"])
+@functools.partial(jax.jit)
 def fused_attention(q: jnp.ndarray, k: jnp.ndarray,
                     v: jnp.ndarray) -> jnp.ndarray:
   """Flash attention."""
-  block_size = 128
+  block_size = 64
   grid = (jt.cdiv(q.shape[2], block_size), q.shape[0] * q.shape[1])
   out_shape = [
       jax.ShapeDtypeStruct(
