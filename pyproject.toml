@@ -17,10 +17,10 @@ tests = [
 
 
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
-[tools.setuptools]
+[tool.setuptools]
 packages = ["jax_triton"]
 
 [tool.setuptools.dynamic]
