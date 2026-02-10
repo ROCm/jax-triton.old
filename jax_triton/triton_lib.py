@@ -20,11 +20,10 @@ from collections.abc import Callable, Sequence
 import copy
 import dataclasses
 import functools
-import inspect
+import operator
 import os
 import pprint
 import tempfile
-import types
 from typing import Any, Protocol, Union
 import zlib
 
@@ -364,7 +363,28 @@ def get_or_create_triton_kernel(
   alignments = [16] * len(arg_dtypes)
   for i, _, value in scalar_args:
     alignments[i] = value
-  specialize_extra = backend.get_arg_specialization
+  
+  # Compute specialization attributes directly.
+  # This replaces the old specialize_impl/get_arg_specialization machinery
+  # that no longer exists in Triton >= 3.3.
+  specialization = []
+  for arg_dtype, val in zip(arg_dtypes, alignments):
+    if isinstance(val, int):
+      # TODO(Arech): not sure where to take `align` value from
+      attr = backend.get_int_specialization(val, align=True)
+    elif hasattr(val, "data_ptr"):
+      attr = backend.get_tensor_specialization(val, align=True)
+    else:
+      attr = ""
+    
+    specialization.append((arg_dtype, attr))
+
+  attrs = {
+      (i,): backend.parse_attr(attr)
+      for i, (_, attr) in enumerate(specialization)
+  }
+  #TODO(Arech): remove the old code below
+  """specialize_extra = backend.get_arg_specialization
   if specialize_impl := getattr(triton.runtime.jit, "specialize_impl", None):
     # TODO(slebedev): Remove this branch once Triton 3.3 is released.
     specialize_impl = functools.partial(
@@ -393,6 +413,8 @@ def get_or_create_triton_kernel(
       (i,): backend.parse_attr(attr)
       for i, (_, attr) in enumerate(specialization)
   }
+  """
+
   constants = dict(metaparams)
   constants.update({k: None for _, k, v in scalar_args if v is None})
   constants.update({fn.arg_names[i]: 1 for i, _, v in scalar_args if v == 1})
@@ -481,14 +503,19 @@ def get_or_create_triton_kernel(
             f" {compilation_result.cluster_dims}\n"
         )
 
+    # TritonKernel constructor is in jax/jaxlib/gpu/triton_kernels.cc:Kernel::Kernel()
+    # Current 0.9.0 signature is
+    # (std::string kernel_name, uint32_t num_warps, uint32_t num_ctas /*n_clusters ?*/,
+    # uint32_t shared_mem_bytes, std::string ptx, std::string ttir,
+    # int compute_capability)
     kernel = triton_kernel_call_lib.TritonKernel(
         kernel_name,
         num_warps,
+        functools.reduce(operator.mul, compilation_result.cluster_dims, 1),
         compilation_result.shared_mem_bytes,
         compilation_result.binary,
         ttir,
         compute_capability,
-        *compilation_result.cluster_dims,
     )
 
     _COMPILED_KERNEL_CACHE[cache_key] = kernel
