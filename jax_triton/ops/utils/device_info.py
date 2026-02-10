@@ -1,14 +1,10 @@
-# import torch
+# import jax
 
 
-def get_num_sms():
+# note that get_num_sms() isn't used
+#def get_num_sms():
     # Returns the Compute Unit count of the current device
-    #current_device_index = torch.cuda.current_device()
-    #current_device = torch.cuda.get_device_properties(current_device_index)
-    #num_sms = current_device.multi_processor_count
-    #return num_sms
-    # TODO(Arech) FIX FOR THE PR (ensure the code is needed even)
-    return 256 # gfx950
+#    return jax.devices()[0].core_count
 
 
 def get_num_xcds():
