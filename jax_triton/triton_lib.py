@@ -118,7 +118,9 @@ def get_triton_type(obj: Any) -> str:
     return f"*{_JAX_TO_TRITON_TYPE_MAP[obj.dtype]}"
   if isinstance(obj, tl.constexpr):
     obj = obj.value
-  if isinstance(obj, int):
+  if isinstance(obj, bool):  # bool is a subclass of int and the test MUST go before int
+    return "B"
+  if isinstance(obj, int):  # True == isinstance(True, int) !!!
     if -(2**31) <= obj < 2**31:
       return "i32"
     elif 2**31 <= obj < 2**32:
@@ -133,8 +135,6 @@ def get_triton_type(obj: Any) -> str:
     return "fp64"
   if isinstance(obj, np.float32):
     return "fp32"
-  if isinstance(obj, bool):
-    return "B"
   if isinstance(obj, str):
     return "str"
   raise NotImplementedError(
@@ -626,6 +626,14 @@ def triton_kernel_call_lowering(
             )
         )
       elif i not in equal_to_1:
+        # Convert TypedInt/TypedFloat subclasses to plain Python types,
+        # as nanobind's strict-mode integer caster rejects subclasses.
+        if isinstance(arg, bool):
+          arg = bool(arg)
+        elif isinstance(arg, int):
+          arg = int(arg)
+        elif isinstance(arg, float):
+          arg = float(arg)
         kernel_params.append(
             triton_kernel_call_lib.create_scalar_parameter(arg, dtype)
         )
