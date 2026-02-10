@@ -116,3 +116,7 @@ def test_mha_backward(
     np.testing.assert_allclose(triton_dq, jax_dq, atol=1e-2, rtol=1e-2)
     np.testing.assert_allclose(triton_dk, jax_dk, atol=1e-2, rtol=1e-2)
     np.testing.assert_allclose(triton_dv, jax_dv, atol=1e-2, rtol=1e-2)
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(pytest.main(["-sv", __file__]))
